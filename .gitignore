@@ -5,10 +5,19 @@ __pycache__/
 .Python
 .venv/
 
-# NVDA add-on build artifacts
+# NVDA add-on / SCons build artifacts
 *.nvda-addon
+.sconsign.dblite
 build/
 dist/
+manifest.ini
+*.mo
+*.pot
+*.html
+*_docHandler.py
+addon/doc/*.css
+addon/doc/en/
+/[0-9]*.[0-9]*.[0-9]*.json
 
 # Local reference docs (copyrighted; do not publish)
 Dolphin_Apollo_2_Manual_djvu.txt
