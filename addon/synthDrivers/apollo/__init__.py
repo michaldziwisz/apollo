@@ -16,6 +16,7 @@ from speech.commands import (
 	BreakCommand,
 	CharacterModeCommand,
 	IndexCommand,
+	LangChangeCommand,
 	PhonemeCommand,
 	PitchCommand,
 	RateCommand,
@@ -34,10 +35,17 @@ except ImportError:
 	from . import cserial as serial  # type: ignore[no-redef]
 	from .cserial import rs485  # type: ignore[no-redef]
 
+try:
+	import languageHandler  # type: ignore[import-not-found]
+except ImportError:
+	languageHandler = None  # type: ignore[assignment]
+
 
 _DEFAULT_PORT = "COM3"
 _BAUD_RATE = 9600
 _INDEX_POLL_INTERVAL_SECONDS = 0.10
+_ROM_INFO_REQUEST_MIN_INTERVAL_SECONDS = 5.0
+_ROM_INFO_REQUEST_TIMEOUT_SECONDS = 2.0
 
 _MIN_RATE = 1
 _MAX_RATE = 9
@@ -58,6 +66,7 @@ _MAX_MARK_SPACE_RATIO = 0x3F
 
 _MUTE = b"\x18"
 _CR = b"\r"
+_NAK = b"\x15"
 
 _POLISH_TO_APOLLO_TRANSLATION = bytes.maketrans(
 	bytes(
@@ -111,6 +120,79 @@ _POLISH_TO_APOLLO_TRANSLATION = bytes.maketrans(
 class _WriteItem:
 	data: bytes
 	indexes: tuple[int, ...] = ()
+
+
+@dataclass(frozen=True)
+class _RomSlotInfo:
+	slot: str
+	languageCode: Optional[str]
+	extension: Optional[str]
+	engineVersion: bytes
+	languageVersion: bytes
+	nvdaLanguage: Optional[str]
+
+
+_CALLING_CODE4_TO_NVDA_LANGUAGE: dict[str, str] = {
+	"0001": "en_US",
+	"0031": "nl_NL",
+	"0033": "fr_FR",
+	"0034": "es_ES",
+	"0039": "it_IT",
+	"0041": "de_CH",
+	"0043": "de_AT",
+	"0044": "en_GB",
+	"0045": "da_DK",
+	"0046": "sv_SE",
+	"0047": "nb_NO",
+	"0048": "pl_PL",
+	"0049": "de_DE",
+	"0055": "pt_BR",
+	"0351": "pt_PT",
+	"0353": "en_IE",
+	"0358": "fi_FI",
+	"0380": "uk_UA",
+	"0420": "cs_CZ",
+	"0421": "sk_SK",
+}
+
+
+def _decodeSwappedHexByte(twoAsciiHexDigits: bytes) -> int:
+	# Dolphin uses "low nibble first" ASCII hex, e.g. b"40" => 0x04.
+	if len(twoAsciiHexDigits) != 2:
+		raise ValueError("Expected 2 ASCII hex digits")
+	normalized = bytes((twoAsciiHexDigits[1], twoAsciiHexDigits[0])).upper()
+	return int(normalized.decode("ascii"), 16)
+
+
+def _normalizeNvdaLang(lang: str) -> str:
+	lang = (lang or "").strip()
+	lang = lang.replace("-", "_")
+	if not lang:
+		return ""
+	parts = lang.split("_")
+	if len(parts) == 1:
+		return parts[0].lower()
+	return f"{parts[0].lower()}_{parts[1].upper()}"
+
+
+def _apolloLanguageCodeToNvdaLanguage(languageCode: str) -> Optional[str]:
+	if not languageCode or len(languageCode) < 5 or not languageCode.isdigit():
+		return None
+	# Manual: first digit may disambiguate languages within same calling code (e.g. Welsh: 10044).
+	variantDigit = languageCode[0]
+	callingCode4 = languageCode[-4:]
+	if callingCode4 == "0044" and variantDigit == "1":
+		return "cy"
+	return _CALLING_CODE4_TO_NVDA_LANGUAGE.get(callingCode4)
+
+
+def _getLanguageDisplayName(nvdaLanguage: Optional[str], fallback: str) -> str:
+	if nvdaLanguage and languageHandler:
+		try:
+			return languageHandler.getLanguageDescription(nvdaLanguage)
+		except Exception:
+			pass
+	return nvdaLanguage or fallback
 
 
 def _encodeText(text: str) -> bytes:
@@ -213,6 +295,7 @@ class SynthDriver(BaseSynthDriver):
 		RateCommand,
 		VolumeCommand,
 		CharacterModeCommand,
+		LangChangeCommand,
 		PhonemeCommand,
 	}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -257,6 +340,10 @@ class SynthDriver(BaseSynthDriver):
 
 		self._pollSuspendLock = threading.Lock()
 		self._pollSuspendUntil = 0.0
+
+		self._romInfoLock = threading.Lock()
+		self._romInfoBySlot: dict[str, _RomSlotInfo] = {}
+		self._romInfoLastRequest = 0.0
 
 		self._rate = 3
 		self._pitch = 8
@@ -323,7 +410,15 @@ class SynthDriver(BaseSynthDriver):
 			self._serial = ser
 
 		self._queueWrite(_MUTE + b"@1+")
+		self._queueRomInfoRequestIfNeeded()
 		return True
+
+	def _suspendPolling(self, seconds: float) -> None:
+		if seconds <= 0:
+			return
+		until = time.monotonic() + seconds
+		with self._pollSuspendLock:
+			self._pollSuspendUntil = max(self._pollSuspendUntil, until)
 
 	def _suspendPollingAfterWrite(self, byteCount: int) -> None:
 		# Serial line time ≈ bytes * (start + 8 data + stop) / baud.
@@ -379,18 +474,23 @@ class SynthDriver(BaseSynthDriver):
 				time.sleep(0.5)
 				continue
 
-			if not first or first != b"I":
+			if not first or first == _NAK:
 				continue
 
-			try:
-				rest = ser.read(3)
-				if len(rest) != 3:
+			if first == b"I":
+				try:
+					rest = ser.read(3)
+					if len(rest) != 3:
+						continue
+					unitsRemaining = _decodeSwappedHexByte(rest[:2])
+				except Exception:
 					continue
-				unitsRemaining = int(rest[:2].decode("ascii"), 16)
-			except Exception:
+				self._onUnitsRemaining(unitsRemaining)
 				continue
 
-			self._onUnitsRemaining(unitsRemaining)
+			if first == b"L":
+				self._handleLanguageListResponse(ser)
+				continue
 
 	def _clearIndexes(self) -> None:
 		with self._indexLock:
@@ -456,6 +556,9 @@ class SynthDriver(BaseSynthDriver):
 			return
 		self._port = value
 		self._disconnect()
+		with self._romInfoLock:
+			self._romInfoBySlot.clear()
+			self._romInfoLastRequest = 0.0
 
 	def _sendSettingCommand(self, command: str) -> None:
 		if self._getSerial() is None:
@@ -577,14 +680,33 @@ class SynthDriver(BaseSynthDriver):
 		self._sendSettingCommand(f"@${value}")
 
 	def _get_availableRoms(self):
-		roms: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
-		roms["1"] = StringParameterInfo("1", _("ROM 1"))
-		roms["2"] = StringParameterInfo("2", _("ROM 2"))
-		roms["3"] = StringParameterInfo("3", _("ROM 3"))
-		roms["4"] = StringParameterInfo("4", _("ROM 4"))
+		if self._getSerial() is None:
+			self._ensureConnected()
+		self._queueRomInfoRequestIfNeeded()
+		with self._romInfoLock:
+			infoBySlot = dict(self._romInfoBySlot)
+
+		slots: list[str]
+		if infoBySlot:
+			slots = sorted(infoBySlot.keys(), key=lambda s: int(s) if s.isdigit() else 999)
+		else:
+			slots = ["1", "2", "3", "4"]
+
 		current = self.rom
-		if current and current not in roms:
-			roms[current] = StringParameterInfo(current, current)
+		if current and current not in slots:
+			slots.append(current)
+
+		roms: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
+		for slot in slots:
+			info = infoBySlot.get(slot)
+			if info and info.languageCode:
+				displayLang = _getLanguageDisplayName(info.nvdaLanguage, info.languageCode)
+				roms[slot] = StringParameterInfo(
+					slot,
+					_("{slot}: {language}").format(slot=slot, language=displayLang),
+				)
+			else:
+				roms[slot] = StringParameterInfo(slot, _("ROM {slot}").format(slot=slot))
 		return roms
 
 	def _get_rom(self) -> str:
@@ -621,9 +743,10 @@ class SynthDriver(BaseSynthDriver):
 		self._voicing = self._percentToParam(value, _MIN_VOICING, _MAX_VOICING)
 		self._sendSettingCommand(f"@B{self._voicing}")
 
-	def _settingsPrefix(self) -> bytes:
+	def _settingsPrefix(self, *, rom: Optional[str] = None) -> bytes:
+		selectedRom = self._rom if rom is None else rom
 		return (
-			f"@={self._rom}, "
+			f"@={selectedRom}, "
 			f"@K{self._speakerTable} "
 			f"@${self._voiceFilter} "
 			f"@P{1 if self._punctuation else 0} "
@@ -640,6 +763,130 @@ class SynthDriver(BaseSynthDriver):
 			f"@D{_hexDigit(self._sentencePause)} "
 			f"@Q{self._wordPause} "
 		).encode("ascii", "ignore")
+
+	def _queueRomInfoRequestIfNeeded(self, *, force: bool = False) -> None:
+		if self._getSerial() is None:
+			return
+		with self._romInfoLock:
+			hasInfo = bool(self._romInfoBySlot)
+			lastRequest = self._romInfoLastRequest
+		if hasInfo and not force:
+			return
+		now = time.monotonic()
+		if not force and now - lastRequest < _ROM_INFO_REQUEST_MIN_INTERVAL_SECONDS:
+			return
+		with self._romInfoLock:
+			self._romInfoLastRequest = now
+		self._suspendPolling(_ROM_INFO_REQUEST_TIMEOUT_SECONDS)
+		self._queueWrite(b"@L")
+
+	def _handleLanguageListResponse(self, ser) -> None:
+		deadline = time.monotonic() + _ROM_INFO_REQUEST_TIMEOUT_SECONDS
+
+		def readByte() -> bytes:
+			while time.monotonic() < deadline and not self._stopEvent.is_set():
+				b = ser.read(1)
+				if b:
+					return b
+			return b""
+
+		def readSwappedHexByte() -> int:
+			digits = bytearray()
+			while len(digits) < 2 and time.monotonic() < deadline and not self._stopEvent.is_set():
+				b = readByte()
+				if not b:
+					continue
+				if b in b"0123456789abcdefABCDEF":
+					digits.extend(b)
+					continue
+			if len(digits) != 2:
+				raise TimeoutError
+			return _decodeSwappedHexByte(bytes(digits))
+
+		def readNonSeparator() -> bytes:
+			while time.monotonic() < deadline and not self._stopEvent.is_set():
+				b = readByte()
+				if not b:
+					continue
+				if b in b", \t\r\n":
+					continue
+				return b
+			return b""
+
+		try:
+			recordCount = readSwappedHexByte()
+			recordSize = readSwappedHexByte()
+			if recordCount <= 0 or recordSize <= 0:
+				return
+
+			total = recordCount * recordSize
+			firstData = readNonSeparator()
+			if not firstData:
+				return
+
+			data = bytearray(firstData)
+			while len(data) < total and time.monotonic() < deadline and not self._stopEvent.is_set():
+				chunk = ser.read(total - len(data))
+				if not chunk:
+					continue
+				data.extend(chunk)
+			if len(data) < total:
+				return
+		except Exception:
+			log.debugWarning("Failed to parse Apollo language list (@L) response", exc_info=True)
+			return
+
+		parsed: dict[str, _RomSlotInfo] = {}
+		for index in range(min(recordCount, 4)):
+			slot = str(index + 1)
+			start = index * recordSize
+			end = start + recordSize
+			rec = bytes(data[start:end])
+
+			langCodeBytes = rec[:5]
+			languageCode = None
+			if len(langCodeBytes) == 5 and all(48 <= b <= 57 for b in langCodeBytes):
+				languageCode = langCodeBytes.decode("ascii")
+
+			extension = None
+			if recordSize >= 6:
+				ext = rec[5:6]
+				if ext and 32 <= ext[0] <= 126:
+					extension = ext.decode("ascii")
+
+			engineVersion = rec[6:10] if recordSize >= 10 else b""
+			languageVersion = rec[10:14] if recordSize >= 14 else b""
+			nvdaLanguage = _apolloLanguageCodeToNvdaLanguage(languageCode) if languageCode else None
+
+			parsed[slot] = _RomSlotInfo(
+				slot=slot,
+				languageCode=languageCode,
+				extension=extension,
+				engineVersion=engineVersion,
+				languageVersion=languageVersion,
+				nvdaLanguage=nvdaLanguage,
+			)
+
+		with self._romInfoLock:
+			self._romInfoBySlot = parsed
+
+	def _getRomForNvdaLanguage(self, requestedLang: str) -> Optional[str]:
+		requested = _normalizeNvdaLang(requestedLang)
+		if not requested:
+			return None
+		with self._romInfoLock:
+			infoBySlot = dict(self._romInfoBySlot)
+		if not infoBySlot:
+			return None
+
+		requestedBase = requested.split("_")[0]
+		for slot, info in infoBySlot.items():
+			candidate = _normalizeNvdaLang(info.nvdaLanguage or "")
+			if not candidate:
+				continue
+			if requested == candidate or requestedBase == candidate.split("_")[0]:
+				return slot
+		return None
 
 	def speak(self, speechSequence):
 		self.cancel()
@@ -689,6 +936,15 @@ class SynthDriver(BaseSynthDriver):
 			elif isinstance(item, CharacterModeCommand):
 				flushText()
 				outputParts.append(f"@S{1 if item.state else 0} ".encode("ascii", "ignore"))
+			elif isinstance(item, LangChangeCommand):
+				flushText()
+				desiredRom = self._rom
+				if item.lang:
+					self._queueRomInfoRequestIfNeeded()
+					mappedRom = self._getRomForNvdaLanguage(item.lang)
+					if mappedRom:
+						desiredRom = mappedRom
+				outputParts.append(self._settingsPrefix(rom=desiredRom))
 			elif isinstance(item, PhonemeCommand):
 				flushText()
 				if item.text:

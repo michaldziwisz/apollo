@@ -42,6 +42,11 @@ Indexing uses `@1+`, `@1?` and `@l+` (see the Dolphin Series 2 manual).
 
 `BreakCommand` maps to `@Tx` (~100 ms pause).
 
+## ROM/language detection
+
+The driver queries the synthesizer using `@L` and uses the returned slot info to label ROM slots in NVDA settings.
+`LangChangeCommand` attempts to switch ROM slots when possible (based on `@L` data).
+
 ## Notes
 
 The original Dolphin manual is not included in this repository (copyright).
