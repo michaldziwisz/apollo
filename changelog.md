@@ -1,3 +1,7 @@
+## 0.1.10
+
+- Fix regression in 0.1.9 where the driver could stop speaking due to `_settingsPrefix` being indented incorrectly.
+
 ## 0.1.9
 
 - Fix a stray “1” being spoken at NVDA startup by selecting the default ROM using `@=T` instead of `@=1`.

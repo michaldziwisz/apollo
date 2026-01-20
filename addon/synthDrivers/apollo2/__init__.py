@@ -791,17 +791,17 @@ class SynthDriver(BaseSynthDriver):
 		self._voicing = self._percentToParam(value, _MIN_VOICING, _MAX_VOICING)
 		self._sendSettingCommand(f"@B{self._voicing}")
 
-		def _settingsPrefix(self, *, rom: Optional[str] = None) -> bytes:
-			selectedRom = self._rom if rom is None else rom
-			# Manual: @=T selects the default ROM (ROM 1).
-			romToken = "T" if selectedRom == "1" else selectedRom
-			return (
-				f"@={romToken}, "
-				f"@K{self._speakerTable} "
-				f"@${self._voiceFilter} "
-				f"@P{1 if self._punctuation else 0} "
-				f"@S{1 if self._spellMode else 0} "
-				f"@H{1 if self._hypermode else 0} "
+	def _settingsPrefix(self, *, rom: Optional[str] = None) -> bytes:
+		selectedRom = self._rom if rom is None else rom
+		# Manual: @=T selects the default ROM (ROM 1).
+		romToken = "T" if selectedRom == "1" else selectedRom
+		return (
+			f"@={romToken}, "
+			f"@K{self._speakerTable} "
+			f"@${self._voiceFilter} "
+			f"@P{1 if self._punctuation else 0} "
+			f"@S{1 if self._spellMode else 0} "
+			f"@H{1 if self._hypermode else 0} "
 			f"@X{1 if self._phoneticMode else 0} "
 			f"@M{self._markSpaceRatio:02X} "
 			f"@V{self._voice} "
