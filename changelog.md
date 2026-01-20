@@ -1,3 +1,8 @@
+## 0.1.14
+
+- Handle `CharacterModeCommand` so shortcuts like “Alt+ s zaznaczone” don’t collapse into “Alt+szaznaczone”.
+- Improve `PitchCommand` handling (used for raising pitch on capitals).
+
 ## 0.1.13
 
 - Implement `PitchCommand` so NVDA’s “cap pitch change” (raising pitch on capitals) works.

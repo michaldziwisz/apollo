@@ -14,6 +14,8 @@ from autoSettingsUtils.utils import StringParameterInfo
 from logHandler import log
 from speech.commands import (
 	BreakCommand,
+	CharacterModeCommand,
+	EndUtteranceCommand,
 	IndexCommand,
 	PitchCommand,
 )
@@ -325,6 +327,8 @@ class SynthDriver(BaseSynthDriver):
 	supportedCommands = {
 		IndexCommand,
 		BreakCommand,
+		CharacterModeCommand,
+		EndUtteranceCommand,
 		PitchCommand,
 	}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
@@ -958,6 +962,7 @@ class SynthDriver(BaseSynthDriver):
 		indexes: list[int] = []
 		outputParts: list[bytes] = []
 		textBufferParts: list[str] = []
+		charModeActive = False
 
 		def flushText() -> None:
 			if not textBufferParts:
@@ -966,6 +971,9 @@ class SynthDriver(BaseSynthDriver):
 			textBufferParts.clear()
 			if text:
 				outputParts.append(_encodeText(text))
+
+		def setSpellMode(enabled: bool) -> None:
+			outputParts.append(f" @S{1 if enabled else 0} ".encode("ascii", "ignore"))
 
 		if self._needsSettingsSync:
 			if self._needsRomSwitch:
@@ -977,33 +985,50 @@ class SynthDriver(BaseSynthDriver):
 		for item in speechSequence:
 			if isinstance(item, str):
 				textBufferParts.append(_sanitizeText(item))
+				if charModeActive:
+					# NVDA doesn't always send CharacterModeCommand(False); apply it only to the
+					# immediately following text chunk, then restore user setting.
+					flushText()
+					setSpellMode(self._spellMode)
+					charModeActive = False
 			elif isinstance(item, IndexCommand):
 				flushText()
 				outputParts.append(b" @I+ ")
 				indexes.append(item.index)
+			elif isinstance(item, CharacterModeCommand):
+				flushText()
+				if item.state:
+					setSpellMode(True)
+					charModeActive = True
+				else:
+					setSpellMode(self._spellMode)
+					charModeActive = False
 			elif isinstance(item, PitchCommand):
 				flushText()
 				basePitch = int(getattr(self, "pitch", 50) or 0)
 				targetPitch = basePitch
-				try:
-					newValue = item.newValue
-					if newValue is not None:
-						targetPitch = int(round(newValue))
-				except Exception:
-					try:
-						offset = item.offset
-						targetPitch = basePitch + int(offset)
-					except Exception:
-						targetPitch = basePitch
+				if getattr(item, "offset", None) is not None:
+					targetPitch = basePitch + int(item.offset)
+				elif getattr(item, "multiplier", None) is not None:
+					targetPitch = int(round(basePitch * float(item.multiplier)))
 				targetPitch = max(0, min(100, targetPitch))
 				apolloPitch = self._percentToParam(targetPitch, _MIN_PITCH, _MAX_PITCH)
-				outputParts.append(f"@F{_hexDigit(apolloPitch)}".encode("ascii", "ignore"))
+				outputParts.append(f"@F{_hexDigit(apolloPitch)} ".encode("ascii", "ignore"))
+			elif isinstance(item, EndUtteranceCommand):
+				flushText()
+				if charModeActive:
+					setSpellMode(self._spellMode)
+					charModeActive = False
 			elif isinstance(item, BreakCommand):
 				flushText()
 				if item.time and item.time > 0:
 					repeats = max(1, round(item.time / 100))
 					outputParts.append(b" @Tx " * repeats)
 
+		if charModeActive:
+			flushText()
+			setSpellMode(self._spellMode)
+			charModeActive = False
 		flushText()
 		# Always append a final index mark so we can reliably detect end of speech.
 		outputParts.append(b" @I+ ")
