@@ -6,3 +6,32 @@ NVDA synthesizer driver for Dolphin Apollo 2 / PC 2 Card / Juno (serial).
 
 Work in progress: modernizing the add-on and implementing missing command support.
 
+## Build (from source)
+
+This repository uses the standard NVDA add-on SCons template.
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -U pip wheel
+.venv/bin/pip install scons markdown
+.venv/bin/scons
+```
+
+The build produces `apollo-<version>.nvda-addon` in the repository root.
+
+## Settings mapping
+
+- `Voice` -> `@Vd`
+- `Rate` -> `@Wd`
+- `Pitch` -> `@Fh`
+- `Volume` -> `@Ah`
+- `Inflection` (prosody) -> `@Ro`
+- `Word pause` -> `@Qd`
+- `Sentence pause` -> `@Dh`
+- `Voicing` -> `@Bd`
+
+Indexing uses `@1+`, `@1?` and `@l+` (see the Dolphin Series 2 manual).
+
+## Notes
+
+The original Dolphin manual is not included in this repository (copyright).
