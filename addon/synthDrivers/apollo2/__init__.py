@@ -328,30 +328,10 @@ class SynthDriver(BaseSynthDriver):
 
 		self._writeQueue: queue.Queue[Optional[_WriteItem]] = queue.Queue()
 		self._stopEvent = threading.Event()
-		self._writeThread = threading.Thread(
-			target=self._writeLoop,
-			name="apolloSynthWrite",
-			daemon=True,
-		)
-		self._writeThread.start()
 
 		self._indexLock = threading.Lock()
 		self._pendingIndexes: deque[int] = deque()
 		self._isSpeaking = False
-
-		self._readThread = threading.Thread(
-			target=self._readLoop,
-			name="apolloSynthRead",
-			daemon=True,
-		)
-		self._readThread.start()
-
-		self._indexPollThread = threading.Thread(
-			target=self._pollLoop,
-			name="apolloSynthIndexPoll",
-			daemon=True,
-		)
-		self._indexPollThread.start()
 
 		self._pollSuspendLock = threading.Lock()
 		self._pollSuspendUntil = 0.0
@@ -376,6 +356,27 @@ class SynthDriver(BaseSynthDriver):
 		self._speakerTable = "0"
 		self._voiceFilter = "0"
 		self._rom = "1"
+
+		self._writeThread = threading.Thread(
+			target=self._writeLoop,
+			name="apolloSynthWrite",
+			daemon=True,
+		)
+		self._writeThread.start()
+
+		self._readThread = threading.Thread(
+			target=self._readLoop,
+			name="apolloSynthRead",
+			daemon=True,
+		)
+		self._readThread.start()
+
+		self._indexPollThread = threading.Thread(
+			target=self._pollLoop,
+			name="apolloSynthIndexPoll",
+			daemon=True,
+		)
+		self._indexPollThread.start()
 
 	def _queueWrite(self, data: bytes, indexes: tuple[int, ...] = ()) -> None:
 		if not self._stopEvent.is_set():

@@ -1,3 +1,7 @@
+## 0.1.7
+
+- Fix continuous reading (“Say All”) by fixing a startup crash in the indexing poll thread.
+
 ## 0.1.6
 
 - Fix continuous reading (“Say All”) by decoding the Apollo index counter in a way that works across firmware variants.
