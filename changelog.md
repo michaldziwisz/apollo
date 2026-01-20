@@ -1,3 +1,7 @@
+## 0.1.13
+
+- Implement `PitchCommand` so NVDA’s “cap pitch change” (raising pitch on capitals) works.
+
 ## 0.1.12
 
 - Normalize whitespace/control characters in spoken text to prevent word-joining issues (e.g. “s zaznaczone” being spoken as “szaznaczone”).

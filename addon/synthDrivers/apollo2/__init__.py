@@ -15,6 +15,7 @@ from logHandler import log
 from speech.commands import (
 	BreakCommand,
 	IndexCommand,
+	PitchCommand,
 )
 from synthDriverHandler import SynthDriver as BaseSynthDriver, VoiceInfo, synthDoneSpeaking, synthIndexReached
 
@@ -324,6 +325,7 @@ class SynthDriver(BaseSynthDriver):
 	supportedCommands = {
 		IndexCommand,
 		BreakCommand,
+		PitchCommand,
 	}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
@@ -979,6 +981,23 @@ class SynthDriver(BaseSynthDriver):
 				flushText()
 				outputParts.append(b" @I+ ")
 				indexes.append(item.index)
+			elif isinstance(item, PitchCommand):
+				flushText()
+				basePitch = int(getattr(self, "pitch", 50) or 0)
+				targetPitch = basePitch
+				try:
+					newValue = item.newValue
+					if newValue is not None:
+						targetPitch = int(round(newValue))
+				except Exception:
+					try:
+						offset = item.offset
+						targetPitch = basePitch + int(offset)
+					except Exception:
+						targetPitch = basePitch
+				targetPitch = max(0, min(100, targetPitch))
+				apolloPitch = self._percentToParam(targetPitch, _MIN_PITCH, _MAX_PITCH)
+				outputParts.append(f"@F{_hexDigit(apolloPitch)}".encode("ascii", "ignore"))
 			elif isinstance(item, BreakCommand):
 				flushText()
 				if item.time and item.time > 0:
