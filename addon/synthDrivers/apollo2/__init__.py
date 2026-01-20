@@ -216,6 +216,18 @@ def _getLanguageDisplayName(nvdaLanguage: Optional[str], fallback: str) -> str:
 	return nvdaLanguage or fallback
 
 
+def _sanitizeText(text: str) -> str:
+	if not text:
+		return ""
+	# Apollo uses @-prefixed commands; don't allow those to leak from NVDA text.
+	text = text.replace("@", " ")
+	# Normalize all whitespace/control chars to ASCII space to avoid word-join bugs
+	# (e.g. tabs / non-breaking spaces not treated as separators by the synth).
+	return "".join(
+		" " if (ch.isspace() or ord(ch) < 0x20 or ord(ch) == 0x7F) else ch for ch in text
+	)
+
+
 def _encodeText(text: str) -> bytes:
 	textWithNumbers = numbers_pl.dajNapisZLiczbamiWPostaciSlownej(text)
 	cp1250 = textWithNumbers.encode("cp1250", "replace")
@@ -962,8 +974,7 @@ class SynthDriver(BaseSynthDriver):
 
 		for item in speechSequence:
 			if isinstance(item, str):
-				cleaned = item.replace("@", " ").replace("\r", " ").replace("\n", " ")
-				textBufferParts.append(cleaned)
+				textBufferParts.append(_sanitizeText(item))
 			elif isinstance(item, IndexCommand):
 				flushText()
 				outputParts.append(b" @I+ ")

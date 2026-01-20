@@ -1,3 +1,7 @@
+## 0.1.12
+
+- Normalize whitespace/control characters in spoken text to prevent word-joining issues (e.g. “s zaznaczone” being spoken as “szaznaczone”).
+
 ## 0.1.11
 
 - Fix a stray “t” being spoken at NVDA startup by sending ROM selection separately (not embedded in speech).
