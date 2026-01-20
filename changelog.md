@@ -1,3 +1,7 @@
+## 0.1.6
+
+- Fix continuous reading (“Say All”) by decoding the Apollo index counter in a way that works across firmware variants.
+
 ## 0.1.5
 
 - Fix “Say All” / continuous reading by re-enabling indexing, using Apollo’s `@I?` / `@I+` commands (instead of `@1?` / `@1+`).

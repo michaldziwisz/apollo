@@ -160,6 +160,29 @@ def _decodeSwappedHexByte(twoAsciiHexDigits: bytes) -> int:
 	return int(normalized.decode("ascii"), 16)
 
 
+def _decodeIndexCounter(twoAsciiHexDigits: bytes, pendingCount: int) -> int:
+	"""
+	Apollo firmware variants disagree on hex digit order for the index counter.
+	Try both and prefer a value that fits the number of pending marks.
+	"""
+	if len(twoAsciiHexDigits) != 2:
+		raise ValueError("Expected 2 ASCII hex digits")
+	try:
+		normal = int(twoAsciiHexDigits.decode("ascii"), 16)
+	except Exception:
+		normal = 0
+	try:
+		swapped = _decodeSwappedHexByte(twoAsciiHexDigits)
+	except Exception:
+		swapped = normal
+
+	candidatesInRange = [v for v in (normal, swapped) if 0 <= v <= pendingCount]
+	if candidatesInRange:
+		# Prefer the larger value to avoid popping indexes too early.
+		return max(candidatesInRange)
+	return min(normal, swapped)
+
+
 def _normalizeNvdaLang(lang: str) -> str:
 	lang = (lang or "").strip()
 	lang = lang.replace("-", "_")
@@ -481,7 +504,9 @@ class SynthDriver(BaseSynthDriver):
 					rest = ser.read(3)
 					if len(rest) != 3:
 						continue
-					unitsRemaining = _decodeSwappedHexByte(rest[:2])
+					with self._indexLock:
+						pendingCount = len(self._pendingIndexes)
+					unitsRemaining = _decodeIndexCounter(rest[:2], pendingCount)
 				except Exception:
 					continue
 				self._onUnitsRemaining(unitsRemaining)
