@@ -328,6 +328,7 @@ class SynthDriver(BaseSynthDriver):
 		self._serialIoLock = threading.Lock()
 
 		self._needsSettingsSync = True
+		self._needsRomSwitch = False
 
 		self._writeQueue: queue.Queue[Optional[_WriteItem]] = queue.Queue()
 		self._stopEvent = threading.Event()
@@ -766,6 +767,7 @@ class SynthDriver(BaseSynthDriver):
 		if value == self._rom:
 			return
 		self._rom = value
+		self._needsRomSwitch = True
 		self._needsSettingsSync = True
 		# Selecting a ROM might reset the synth; reconnect on next utterance.
 		self._disconnect()
@@ -792,11 +794,7 @@ class SynthDriver(BaseSynthDriver):
 		self._sendSettingCommand(f"@B{self._voicing}")
 
 	def _settingsPrefix(self, *, rom: Optional[str] = None) -> bytes:
-		selectedRom = self._rom if rom is None else rom
-		# Manual: @=T selects the default ROM (ROM 1).
-		romToken = "T" if selectedRom == "1" else selectedRom
 		return (
-			f"@={romToken}, "
 			f"@K{self._speakerTable} "
 			f"@${self._voiceFilter} "
 			f"@P{1 if self._punctuation else 0} "
@@ -956,6 +954,9 @@ class SynthDriver(BaseSynthDriver):
 				outputParts.append(_encodeText(text))
 
 		if self._needsSettingsSync:
+			if self._needsRomSwitch:
+				self._queueWrite(f"@={self._rom}, ".encode("ascii", "ignore"))
+				self._needsRomSwitch = False
 			outputParts.append(self._settingsPrefix())
 			self._needsSettingsSync = False
 
