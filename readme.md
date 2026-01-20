@@ -38,7 +38,7 @@ The build produces `apollo2-<version>.nvda-addon` in the repository root.
 - `Sentence pause` -> `@Dh`
 - `Voicing` -> `@Bd`
 
-Indexing is currently disabled (to avoid regressions on some setups).
+Indexing uses Apollo `@I?` and `@I+` commands (required for continuous reading / “Say All”).
 
 `BreakCommand` maps to `@Tx` (~100 ms pause).
 

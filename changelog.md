@@ -1,3 +1,7 @@
+## 0.1.5
+
+- Fix “Say All” / continuous reading by re-enabling indexing, using Apollo’s `@I?` / `@I+` commands (instead of `@1?` / `@1+`).
+
 ## 0.1.4
 
 - Disable Apollo indexing (`@1?`/`@1+`/`@l+`) to fix an issue where an extra “1” could be spoken at the start of utterances.

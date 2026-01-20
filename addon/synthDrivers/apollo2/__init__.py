@@ -14,6 +14,7 @@ from autoSettingsUtils.utils import StringParameterInfo
 from logHandler import log
 from speech.commands import (
 	BreakCommand,
+	IndexCommand,
 )
 from synthDriverHandler import SynthDriver as BaseSynthDriver, VoiceInfo, synthDoneSpeaking, synthIndexReached
 
@@ -60,6 +61,8 @@ _MAX_MARK_SPACE_RATIO = 0x3F
 _MUTE = b"\x18"
 _CR = b"\r"
 _NAK = b"\x15"
+
+_INTERNAL_DONE_INDEX = -1
 
 _POLISH_TO_APOLLO_TRANSLATION = bytes.maketrans(
 	bytes(
@@ -282,9 +285,10 @@ class SynthDriver(BaseSynthDriver):
 		),
 	)
 	supportedCommands = {
+		IndexCommand,
 		BreakCommand,
 	}
-	supportedNotifications = {synthDoneSpeaking}
+	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
 	@classmethod
 	def check(cls):
@@ -398,7 +402,9 @@ class SynthDriver(BaseSynthDriver):
 		with self._serialLock:
 			self._serial = ser
 
+		# Reset and enable indexing (used for continuous reading / say all).
 		self._queueWrite(_MUTE)
+		self._queueWrite(b"@I+ ")
 		return True
 
 	def _suspendPolling(self, seconds: float) -> None:
@@ -450,7 +456,7 @@ class SynthDriver(BaseSynthDriver):
 				shouldPoll = self._isSpeaking or bool(self._pendingIndexes)
 
 			if shouldPoll and self._getSerial() is not None:
-				self._queueWrite(b"@1?")
+				self._queueWrite(b"@I?")
 			time.sleep(_INDEX_POLL_INTERVAL_SECONDS)
 
 	def _readLoop(self) -> None:
@@ -890,6 +896,7 @@ class SynthDriver(BaseSynthDriver):
 			synthDoneSpeaking.notify(synth=self)
 			return
 
+		indexes: list[int] = []
 		outputParts: list[bytes] = []
 		textBufferParts: list[str] = []
 
@@ -909,6 +916,10 @@ class SynthDriver(BaseSynthDriver):
 			if isinstance(item, str):
 				cleaned = item.replace("@", " ").replace("\r", " ").replace("\n", " ")
 				textBufferParts.append(cleaned)
+			elif isinstance(item, IndexCommand):
+				flushText()
+				outputParts.append(b" @I+ ")
+				indexes.append(item.index)
 			elif isinstance(item, BreakCommand):
 				flushText()
 				if item.time and item.time > 0:
@@ -916,9 +927,11 @@ class SynthDriver(BaseSynthDriver):
 					outputParts.append(b" @Tx " * repeats)
 
 		flushText()
+		# Always append a final index mark so we can reliably detect end of speech.
+		outputParts.append(b" @I+ ")
+		indexes.append(_INTERNAL_DONE_INDEX)
 		data = b"".join(outputParts) + _CR
-		self._queueWrite(data)
-		synthDoneSpeaking.notify(synth=self)
+		self._queueWrite(data, indexes=tuple(indexes))
 
 	def cancel(self):
 		wasSpeaking = False
@@ -934,6 +947,7 @@ class SynthDriver(BaseSynthDriver):
 
 		if self._getSerial() is not None:
 			self._queueWrite(_MUTE)
+			self._queueWrite(b"@I+ ")
 
 		if wasSpeaking:
 			synthDoneSpeaking.notify(synth=self)
