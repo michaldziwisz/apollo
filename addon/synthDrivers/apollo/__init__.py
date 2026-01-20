@@ -5,6 +5,7 @@ import queue
 import threading
 import time
 from collections import OrderedDict, deque
+from dataclasses import dataclass
 from typing import Optional
 
 import addonHandler
@@ -96,6 +97,12 @@ _POLISH_TO_APOLLO_TRANSLATION = bytes.maketrans(
 )
 
 
+@dataclass(frozen=True)
+class _WriteItem:
+	data: bytes
+	indexes: tuple[int, ...] = ()
+
+
 def _encodeText(text: str) -> bytes:
 	textWithNumbers = numbers_pl.dajNapisZLiczbamiWPostaciSlownej(text)
 	cp1250 = textWithNumbers.encode("cp1250", "replace")
@@ -155,7 +162,7 @@ class SynthDriver(BaseSynthDriver):
 		self._serial: Optional[serial.Serial] = None  # type: ignore[misc]
 		self._serialLock = threading.Lock()
 
-		self._writeQueue: queue.Queue[Optional[bytes]] = queue.Queue()
+		self._writeQueue: queue.Queue[Optional[_WriteItem]] = queue.Queue()
 		self._stopEvent = threading.Event()
 		self._writeThread = threading.Thread(
 			target=self._writeLoop,
@@ -182,6 +189,9 @@ class SynthDriver(BaseSynthDriver):
 		)
 		self._indexPollThread.start()
 
+		self._pollSuspendLock = threading.Lock()
+		self._pollSuspendUntil = 0.0
+
 		self._rate = 3
 		self._pitch = 8
 		self._volume = 0xA
@@ -191,9 +201,9 @@ class SynthDriver(BaseSynthDriver):
 		self._wordPause = 0
 		self._voice = "1"
 
-	def _queueWrite(self, data: bytes) -> None:
+	def _queueWrite(self, data: bytes, indexes: tuple[int, ...] = ()) -> None:
 		if not self._stopEvent.is_set():
-			self._writeQueue.put(data)
+			self._writeQueue.put(_WriteItem(data=data, indexes=indexes))
 
 	def _getSerial(self) -> Optional[serial.Serial]:  # type: ignore[misc]
 		with self._serialLock:
@@ -241,21 +251,42 @@ class SynthDriver(BaseSynthDriver):
 		self._queueWrite(_MUTE + b"@1+")
 		return True
 
+	def _suspendPollingAfterWrite(self, byteCount: int) -> None:
+		# Serial line time ≈ bytes * (start + 8 data + stop) / baud.
+		# Add a small safety margin to avoid polling before the synth has received the whole chunk.
+		seconds = (byteCount * 10) / _BAUD_RATE + 0.05
+		until = time.monotonic() + seconds
+		with self._pollSuspendLock:
+			self._pollSuspendUntil = max(self._pollSuspendUntil, until)
+
 	def _writeLoop(self) -> None:
 		while True:
-			data = self._writeQueue.get()
-			if data is None:
+			item = self._writeQueue.get()
+			if item is None:
 				return
 			ser = self._getSerial()
 			if ser is None:
 				continue
 			try:
-				ser.write(data)
+				ser.write(item.data)
 			except Exception:
 				log.debugWarning("Apollo serial write failed", exc_info=True)
+				continue
+
+			if item.indexes:
+				with self._indexLock:
+					self._pendingIndexes.extend(item.indexes)
+					self._isSpeaking = True
+				self._suspendPollingAfterWrite(len(item.data))
 
 	def _pollLoop(self) -> None:
 		while not self._stopEvent.is_set():
+			with self._pollSuspendLock:
+				suspendUntil = self._pollSuspendUntil
+			now = time.monotonic()
+			if now < suspendUntil:
+				time.sleep(min(_INDEX_POLL_INTERVAL_SECONDS, suspendUntil - now))
+				continue
 			if self._getSerial() is not None:
 				self._queueWrite(b"@1?")
 			time.sleep(_INDEX_POLL_INTERVAL_SECONDS)
@@ -429,6 +460,7 @@ class SynthDriver(BaseSynthDriver):
 			return
 
 		textParts: list[str] = []
+		indexes: list[int] = []
 		hadIndex = False
 
 		for item in speechSequence:
@@ -438,13 +470,11 @@ class SynthDriver(BaseSynthDriver):
 			elif isinstance(item, IndexCommand):
 				hadIndex = True
 				textParts.append(" @l+ ")
-				with self._indexLock:
-					self._pendingIndexes.append(item.index)
-					self._isSpeaking = True
+				indexes.append(item.index)
 
 		text = "".join(textParts).strip()
 		data = self._settingsPrefix() + _encodeText(text) + _CR
-		self._queueWrite(data)
+		self._queueWrite(data, indexes=tuple(indexes))
 
 		if not hadIndex:
 			synthDoneSpeaking.notify(synth=self)
