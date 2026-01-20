@@ -17,7 +17,7 @@ python3 -m venv .venv
 .venv/bin/scons
 ```
 
-The build produces `apollo-<version>.nvda-addon` in the repository root.
+The build produces `apollo2-<version>.nvda-addon` in the repository root.
 
 ## Settings mapping
 
@@ -45,12 +45,12 @@ Indexing uses `@1+`, `@1?` and `@l+` (see the Dolphin Series 2 manual).
 ## ROM/language detection
 
 The driver queries the synthesizer using `@L` and uses the returned slot info to label ROM slots in NVDA settings.
-`LangChangeCommand` attempts to switch ROM slots when possible (based on `@L` data).
+Automatic ROM switching via `LangChangeCommand` is currently disabled (to avoid regressions).
 
 ## Coexistence with older add-ons
 
-This add-on registers the synthesizer driver as `apollo2` (shown as “Dolphin Apollo 2 (modern)”), so it should not conflict
-with older Apollo add-ons that provide a driver named `apollo`.
+This add-on uses a separate add-on ID (`apollo2`) and registers the synthesizer driver as `apollo2`
+(shown as “Dolphin Apollo 2 (modern)”), so it should not overwrite or conflict with older Apollo add-ons.
 
 ## Notes
 

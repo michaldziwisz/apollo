@@ -14,13 +14,7 @@ from autoSettingsUtils.utils import StringParameterInfo
 from logHandler import log
 from speech.commands import (
 	BreakCommand,
-	CharacterModeCommand,
 	IndexCommand,
-	LangChangeCommand,
-	PhonemeCommand,
-	PitchCommand,
-	RateCommand,
-	VolumeCommand,
 )
 from synthDriverHandler import SynthDriver as BaseSynthDriver, VoiceInfo, synthDoneSpeaking, synthIndexReached
 
@@ -291,12 +285,6 @@ class SynthDriver(BaseSynthDriver):
 	supportedCommands = {
 		IndexCommand,
 		BreakCommand,
-		PitchCommand,
-		RateCommand,
-		VolumeCommand,
-		CharacterModeCommand,
-		LangChangeCommand,
-		PhonemeCommand,
 	}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
@@ -918,38 +906,6 @@ class SynthDriver(BaseSynthDriver):
 				flushText()
 				repeats = max(1, round(item.time / 100)) if item.time else 1
 				outputParts.append(b" @Tx " * repeats)
-			elif isinstance(item, PitchCommand):
-				flushText()
-				percent = max(0, min(100, item.newValue))
-				raw = self._percentToParam(percent, _MIN_PITCH, _MAX_PITCH)
-				outputParts.append(f"@F{_hexDigit(raw)} ".encode("ascii", "ignore"))
-			elif isinstance(item, RateCommand):
-				flushText()
-				percent = max(0, min(100, item.newValue))
-				raw = self._percentToParam(percent, _MIN_RATE, _MAX_RATE)
-				outputParts.append(f"@W{raw} ".encode("ascii", "ignore"))
-			elif isinstance(item, VolumeCommand):
-				flushText()
-				percent = max(0, min(100, item.newValue))
-				raw = self._percentToParam(percent, _MIN_VOLUME, _MAX_VOLUME)
-				outputParts.append(f"@A{_hexDigit(raw)} ".encode("ascii", "ignore"))
-			elif isinstance(item, CharacterModeCommand):
-				flushText()
-				outputParts.append(f"@S{1 if item.state else 0} ".encode("ascii", "ignore"))
-			elif isinstance(item, LangChangeCommand):
-				flushText()
-				desiredRom = self._rom
-				if item.lang:
-					self._queueRomInfoRequestIfNeeded()
-					mappedRom = self._getRomForNvdaLanguage(item.lang)
-					if mappedRom:
-						desiredRom = mappedRom
-				outputParts.append(self._settingsPrefix(rom=desiredRom))
-			elif isinstance(item, PhonemeCommand):
-				flushText()
-				if item.text:
-					cleaned = item.text.replace("@", " ").replace("\r", " ").replace("\n", " ")
-					textBufferParts.append(cleaned)
 
 		flushText()
 		data = b"".join(outputParts) + _CR

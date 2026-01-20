@@ -13,16 +13,18 @@ from site_scons.site_tools.NVDATool.utils import _
 
 # Add-on information variables
 addon_info = AddonInfo(
-	addon_name="apollo",
+	addon_name="apollo2",
 	# Translators: Summary/title for this add-on to be shown in the add-on store.
-	addon_summary=_("Dolphin Apollo 2 synthesizer driver"),
+	addon_summary=_("Dolphin Apollo 2 synthesizer driver (modern)"),
 	# Translators: Long description to be shown for this add-on in the add-on store.
 	addon_description=_(
 		"Adds support for Dolphin Apollo 2 / PC 2 Card / Juno serial speech synthesizers."
 	),
-	addon_version="0.1.1",
+	addon_version="0.1.2",
 	# Translators: What's new content for the add-on version to be shown in the add-on store.
-	addon_changelog=_("Work in progress; modernized driver and build system."),
+	addon_changelog=_(
+		"Fixes a regression in character/language handling and uses a separate add-on ID so it can be installed alongside older Apollo add-ons."
+	),
 	addon_author="PomPa <Kontakt@napompuj.SE>",
 	addon_url="https://github.com/michaldziwisz/apollo",
 	addon_sourceURL="https://github.com/michaldziwisz/apollo",
