@@ -1,0 +1,14 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.Python
+.venv/
+
+# NVDA add-on build artifacts
+*.nvda-addon
+build/
+dist/
+
+# Local reference docs (copyrighted; do not publish)
+Dolphin_Apollo_2_Manual_djvu.txt
