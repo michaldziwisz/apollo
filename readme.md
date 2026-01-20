@@ -47,6 +47,11 @@ Indexing uses `@1+`, `@1?` and `@l+` (see the Dolphin Series 2 manual).
 The driver queries the synthesizer using `@L` and uses the returned slot info to label ROM slots in NVDA settings.
 `LangChangeCommand` attempts to switch ROM slots when possible (based on `@L` data).
 
+## Coexistence with older add-ons
+
+This add-on registers the synthesizer driver as `apollo2` (shown as “Dolphin Apollo 2 (modern)”), so it should not conflict
+with older Apollo add-ons that provide a driver named `apollo`.
+
 ## Notes
 
 The original Dolphin manual is not included in this repository (copyright).

@@ -1,3 +1,7 @@
+## 0.1.1
+
+- Renamed synth driver module to `apollo2` so it can coexist with older Apollo add-ons.
+
 ## 0.1.0
 
 - Initial public repository + NVDA add-on build scaffolding.

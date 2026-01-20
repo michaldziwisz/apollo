@@ -206,8 +206,8 @@ def _hexDigit(value: int) -> str:
 
 
 class SynthDriver(BaseSynthDriver):
-	name = "apollo"
-	description = "Dolphin Apollo 2"
+	name = "apollo2"
+	description = "Dolphin Apollo 2 (modern)"
 
 	supportedSettings = (
 		BaseSynthDriver.VoiceSetting(),
