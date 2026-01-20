@@ -40,6 +40,7 @@ _BAUD_RATE = 9600
 _INDEX_POLL_INTERVAL_SECONDS = 0.10
 _ROM_INFO_REQUEST_MIN_INTERVAL_SECONDS = 5.0
 _ROM_INFO_REQUEST_TIMEOUT_SECONDS = 2.0
+_WRITE_CHUNK_SIZE = 128
 
 _MIN_RATE = 1
 _MAX_RATE = 9
@@ -116,6 +117,7 @@ _POLISH_TO_APOLLO_TRANSLATION = bytes.maketrans(
 class _WriteItem:
 	data: bytes
 	indexes: tuple[int, ...] = ()
+	generation: int = 0
 
 
 @dataclass(frozen=True)
@@ -323,11 +325,13 @@ class SynthDriver(BaseSynthDriver):
 		self._port: str = _DEFAULT_PORT
 		self._serial: Optional[serial.Serial] = None  # type: ignore[misc]
 		self._serialLock = threading.Lock()
+		self._serialIoLock = threading.Lock()
 
 		self._needsSettingsSync = True
 
 		self._writeQueue: queue.Queue[Optional[_WriteItem]] = queue.Queue()
 		self._stopEvent = threading.Event()
+		self._cancelGeneration = 0
 
 		self._indexLock = threading.Lock()
 		self._pendingIndexes: deque[int] = deque()
@@ -380,7 +384,9 @@ class SynthDriver(BaseSynthDriver):
 
 	def _queueWrite(self, data: bytes, indexes: tuple[int, ...] = ()) -> None:
 		if not self._stopEvent.is_set():
-			self._writeQueue.put(_WriteItem(data=data, indexes=indexes))
+			self._writeQueue.put(
+				_WriteItem(data=data, indexes=indexes, generation=self._cancelGeneration),
+			)
 
 	def _getSerial(self) -> Optional[serial.Serial]:  # type: ignore[misc]
 		with self._serialLock:
@@ -454,17 +460,30 @@ class SynthDriver(BaseSynthDriver):
 			ser = self._getSerial()
 			if ser is None:
 				continue
-			try:
-				ser.write(item.data)
-			except Exception:
-				log.debugWarning("Apollo serial write failed", exc_info=True)
+			if item.generation != self._cancelGeneration:
 				continue
 
-			self._suspendPollingAfterWrite(len(item.data))
-			if item.indexes:
+			shouldTrackIndexes = False
+			for offset in range(0, len(item.data), _WRITE_CHUNK_SIZE):
+				chunk = item.data[offset : offset + _WRITE_CHUNK_SIZE]
+				with self._serialIoLock:
+					if item.generation != self._cancelGeneration:
+						break
+					try:
+						ser.write(chunk)
+					except Exception:
+						log.debugWarning("Apollo serial write failed", exc_info=True)
+						break
+				self._suspendPollingAfterWrite(len(chunk))
+			else:
+				# Completed without breaking.
+				shouldTrackIndexes = True
+
+			if shouldTrackIndexes and item.indexes:
 				with self._indexLock:
-					self._pendingIndexes.extend(item.indexes)
-					self._isSpeaking = True
+					if item.generation == self._cancelGeneration:
+						self._pendingIndexes.extend(item.indexes)
+						self._isSpeaking = True
 
 	def _pollLoop(self) -> None:
 		while not self._stopEvent.is_set():
@@ -964,6 +983,8 @@ class SynthDriver(BaseSynthDriver):
 		with self._indexLock:
 			wasSpeaking = self._isSpeaking or bool(self._pendingIndexes)
 
+		# Abort any in-flight write item and discard queued speech immediately.
+		self._cancelGeneration += 1
 		self._clearIndexes()
 		try:
 			while True:
@@ -971,9 +992,28 @@ class SynthDriver(BaseSynthDriver):
 		except queue.Empty:
 			pass
 
-		if self._getSerial() is not None:
-			self._queueWrite(_MUTE)
-			self._queueWrite(b"@I+ ")
+		ser = self._getSerial()
+		if ser is not None:
+			try:
+				cancelWrite = getattr(ser, "cancel_write", None)
+				if cancelWrite:
+					cancelWrite()
+			except Exception:
+				pass
+			with self._serialIoLock:
+				try:
+					# Drop any pending bytes in the OS TX buffer so the mute command is sent immediately.
+					ser.reset_output_buffer()
+				except Exception:
+					log.debugWarning("Failed to reset Apollo serial output buffer", exc_info=True)
+				try:
+					ser.write(_MUTE)
+				except Exception:
+					log.debugWarning("Apollo serial write failed", exc_info=True)
+				try:
+					ser.write(b"@I+ ")
+				except Exception:
+					log.debugWarning("Apollo serial write failed", exc_info=True)
 
 		if wasSpeaking:
 			synthDoneSpeaking.notify(synth=self)

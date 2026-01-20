@@ -1,3 +1,7 @@
+## 0.1.8
+
+- Fix delayed speech stopping (Ctrl) by purging the serial output buffer on cancel.
+
 ## 0.1.7
 
 - Fix continuous reading (“Say All”) by fixing a startup crash in the indexing poll thread.
