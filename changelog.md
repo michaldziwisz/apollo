@@ -1,3 +1,7 @@
+## 0.1.4
+
+- Disable Apollo indexing (`@1?`/`@1+`/`@l+`) to fix an issue where an extra “1” could be spoken at the start of utterances.
+
 ## 0.1.3
 
 - Stop cancelling speech and re-sending the full settings prefix on every utterance (fixes choppy speech / random voice changes, improves typing echo).

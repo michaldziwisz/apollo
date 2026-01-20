@@ -38,7 +38,7 @@ The build produces `apollo2-<version>.nvda-addon` in the repository root.
 - `Sentence pause` -> `@Dh`
 - `Voicing` -> `@Bd`
 
-Indexing uses `@1+`, `@1?` and `@l+` (see the Dolphin Series 2 manual).
+Indexing is currently disabled (to avoid regressions on some setups).
 
 `BreakCommand` maps to `@Tx` (~100 ms pause).
 
