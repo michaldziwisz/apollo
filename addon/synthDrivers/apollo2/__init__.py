@@ -62,6 +62,8 @@ _MUTE = b"\x18"
 _CR = b"\r"
 _NAK = b"\x15"
 
+_INTERNAL_DONE_INDEX = -1
+
 _POLISH_TO_APOLLO_TRANSLATION = bytes.maketrans(
 	bytes(
 		[
@@ -299,6 +301,8 @@ class SynthDriver(BaseSynthDriver):
 		self._serial: Optional[serial.Serial] = None  # type: ignore[misc]
 		self._serialLock = threading.Lock()
 
+		self._needsSettingsSync = True
+
 		self._writeQueue: queue.Queue[Optional[_WriteItem]] = queue.Queue()
 		self._stopEvent = threading.Event()
 		self._writeThread = threading.Thread(
@@ -362,6 +366,7 @@ class SynthDriver(BaseSynthDriver):
 		with self._serialLock:
 			ser = self._serial
 			self._serial = None
+		self._needsSettingsSync = True
 		if ser is not None:
 			try:
 				ser.close()
@@ -430,11 +435,11 @@ class SynthDriver(BaseSynthDriver):
 				log.debugWarning("Apollo serial write failed", exc_info=True)
 				continue
 
+			self._suspendPollingAfterWrite(len(item.data))
 			if item.indexes:
 				with self._indexLock:
 					self._pendingIndexes.extend(item.indexes)
 					self._isSpeaking = True
-				self._suspendPollingAfterWrite(len(item.data))
 
 	def _pollLoop(self) -> None:
 		while not self._stopEvent.is_set():
@@ -444,7 +449,12 @@ class SynthDriver(BaseSynthDriver):
 			if now < suspendUntil:
 				time.sleep(min(_INDEX_POLL_INTERVAL_SECONDS, suspendUntil - now))
 				continue
-			if self._getSerial() is not None:
+
+			shouldPoll = False
+			with self._indexLock:
+				shouldPoll = self._isSpeaking or bool(self._pendingIndexes)
+
+			if shouldPoll and self._getSerial() is not None:
 				self._queueWrite(b"@1?")
 			time.sleep(_INDEX_POLL_INTERVAL_SECONDS)
 
@@ -497,7 +507,8 @@ class SynthDriver(BaseSynthDriver):
 				shouldNotifyDone = True
 
 		for index in reached:
-			synthIndexReached.notify(synth=self, index=index)
+			if index >= 0:
+				synthIndexReached.notify(synth=self, index=index)
 		if shouldNotifyDone:
 			synthDoneSpeaking.notify(synth=self)
 
@@ -550,8 +561,10 @@ class SynthDriver(BaseSynthDriver):
 
 	def _sendSettingCommand(self, command: str) -> None:
 		if self._getSerial() is None:
+			self._needsSettingsSync = True
 			return
-		self._queueWrite(command.encode("ascii", "ignore"))
+		# Ensure the next text doesn't accidentally join the command stream.
+		self._queueWrite((command + " ").encode("ascii", "ignore"))
 
 	def _get_voice(self) -> str:
 		return self._voice
@@ -707,6 +720,7 @@ class SynthDriver(BaseSynthDriver):
 		if value == self._rom:
 			return
 		self._rom = value
+		self._needsSettingsSync = True
 		# Selecting a ROM might reset the synth; reconnect on next utterance.
 		self._disconnect()
 
@@ -877,13 +891,12 @@ class SynthDriver(BaseSynthDriver):
 		return None
 
 	def speak(self, speechSequence):
-		self.cancel()
 		if not self._ensureConnected():
 			synthDoneSpeaking.notify(synth=self)
 			return
 
 		indexes: list[int] = []
-		outputParts: list[bytes] = [self._settingsPrefix()]
+		outputParts: list[bytes] = []
 		textBufferParts: list[str] = []
 
 		def flushText() -> None:
@@ -891,8 +904,12 @@ class SynthDriver(BaseSynthDriver):
 				return
 			text = "".join(textBufferParts)
 			textBufferParts.clear()
-			if text.strip():
+			if text:
 				outputParts.append(_encodeText(text))
+
+		if self._needsSettingsSync:
+			outputParts.append(self._settingsPrefix())
+			self._needsSettingsSync = False
 
 		for item in speechSequence:
 			if isinstance(item, str):
@@ -904,15 +921,16 @@ class SynthDriver(BaseSynthDriver):
 				indexes.append(item.index)
 			elif isinstance(item, BreakCommand):
 				flushText()
-				repeats = max(1, round(item.time / 100)) if item.time else 1
-				outputParts.append(b" @Tx " * repeats)
+				if item.time and item.time > 0:
+					repeats = max(1, round(item.time / 100))
+					outputParts.append(b" @Tx " * repeats)
 
 		flushText()
+		# Always append a final index mark so we can reliably detect end of speech.
+		outputParts.append(b" @l+ ")
+		indexes.append(_INTERNAL_DONE_INDEX)
 		data = b"".join(outputParts) + _CR
 		self._queueWrite(data, indexes=tuple(indexes))
-
-		if not indexes:
-			synthDoneSpeaking.notify(synth=self)
 
 	def cancel(self):
 		wasSpeaking = False

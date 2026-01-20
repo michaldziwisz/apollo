@@ -1,3 +1,8 @@
+## 0.1.3
+
+- Stop cancelling speech and re-sending the full settings prefix on every utterance (fixes choppy speech / random voice changes, improves typing echo).
+- Track end-of-speech using a final `@l+` index mark so `synthDoneSpeaking` is reliable.
+
 ## 0.1.2
 
 - Changed add-on ID to `apollo2` so it can be installed alongside older Apollo add-ons.
