@@ -22,15 +22,25 @@ The build produces `apollo-<version>.nvda-addon` in the repository root.
 ## Settings mapping
 
 - `Voice` -> `@Vd`
+- `Speaker table` -> `@Kb`
+- `Voice source/filter` -> `@$o`
+- `ROM slot` -> `@=d,`
 - `Rate` -> `@Wd`
 - `Pitch` -> `@Fh`
 - `Volume` -> `@Ah`
 - `Inflection` (prosody) -> `@Ro`
+- `Punctuation` -> `@Pb`
+- `Spell mode` -> `@Sb`
+- `Hypermode` -> `@Hb`
+- `Phonetic mode` -> `@Xb`
+- `Mark-space ratio` -> `@Mhh`
 - `Word pause` -> `@Qd`
 - `Sentence pause` -> `@Dh`
 - `Voicing` -> `@Bd`
 
 Indexing uses `@1+`, `@1?` and `@l+` (see the Dolphin Series 2 manual).
+
+`BreakCommand` maps to `@Tx` (~100 ms pause).
 
 ## Notes
 

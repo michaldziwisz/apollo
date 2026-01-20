@@ -9,10 +9,18 @@ from dataclasses import dataclass
 from typing import Optional
 
 import addonHandler
-from autoSettingsUtils.driverSetting import DriverSetting, NumericDriverSetting
+from autoSettingsUtils.driverSetting import BooleanDriverSetting, DriverSetting, NumericDriverSetting
 from autoSettingsUtils.utils import StringParameterInfo
 from logHandler import log
-from speech.commands import IndexCommand
+from speech.commands import (
+	BreakCommand,
+	CharacterModeCommand,
+	IndexCommand,
+	PhonemeCommand,
+	PitchCommand,
+	RateCommand,
+	VolumeCommand,
+)
 from synthDriverHandler import SynthDriver as BaseSynthDriver, VoiceInfo, synthDoneSpeaking, synthIndexReached
 
 from . import numbers_pl
@@ -45,6 +53,8 @@ _MIN_SENTENCE_PAUSE = 0
 _MAX_SENTENCE_PAUSE = 15
 _MIN_WORD_PAUSE = 0
 _MAX_WORD_PAUSE = 9
+_MIN_MARK_SPACE_RATIO = 0
+_MAX_MARK_SPACE_RATIO = 0x3F
 
 _MUTE = b"\x18"
 _CR = b"\r"
@@ -123,6 +133,54 @@ class SynthDriver(BaseSynthDriver):
 		BaseSynthDriver.PitchSetting(minStep=5),
 		BaseSynthDriver.VolumeSetting(minStep=5),
 		BaseSynthDriver.InflectionSetting(minStep=5),
+		BooleanDriverSetting(
+			"punctuation",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("&Punctuation"),
+			defaultVal=False,
+		),
+		BooleanDriverSetting(
+			"spellMode",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("&Spell mode"),
+			defaultVal=False,
+		),
+		BooleanDriverSetting(
+			"hypermode",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("&Hypermode"),
+			defaultVal=False,
+		),
+		BooleanDriverSetting(
+			"phoneticMode",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("P&honetic mode"),
+			defaultVal=False,
+		),
+		NumericDriverSetting(
+			"markSpaceRatio",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("&Mark-space ratio"),
+			minStep=1,
+		),
+		DriverSetting(
+			"speakerTable",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("Speaker &table"),
+			defaultVal="0",
+		),
+		DriverSetting(
+			"voiceFilter",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("Voice source/&filter"),
+			defaultVal="0",
+		),
+		DriverSetting(
+			"rom",
+			# Translators: Label for a setting in the voice settings dialog.
+			_("&ROM slot"),
+			defaultVal="1",
+		),
 		NumericDriverSetting(
 			"sentencePause",
 			# Translators: Label for a setting in the voice settings dialog.
@@ -148,7 +206,15 @@ class SynthDriver(BaseSynthDriver):
 			defaultVal=_DEFAULT_PORT,
 		),
 	)
-	supportedCommands = {IndexCommand}
+	supportedCommands = {
+		IndexCommand,
+		BreakCommand,
+		PitchCommand,
+		RateCommand,
+		VolumeCommand,
+		CharacterModeCommand,
+		PhonemeCommand,
+	}
 	supportedNotifications = {synthIndexReached, synthDoneSpeaking}
 
 	@classmethod
@@ -200,6 +266,14 @@ class SynthDriver(BaseSynthDriver):
 		self._sentencePause = 0xB
 		self._wordPause = 0
 		self._voice = "1"
+		self._punctuation = False
+		self._spellMode = False
+		self._hypermode = False
+		self._phoneticMode = False
+		self._markSpaceRatio = 0x16
+		self._speakerTable = "0"
+		self._voiceFilter = "0"
+		self._rom = "1"
 
 	def _queueWrite(self, data: bytes, indexes: tuple[int, ...] = ()) -> None:
 		if not self._stopEvent.is_set():
@@ -353,7 +427,10 @@ class SynthDriver(BaseSynthDriver):
 	def _get_availablePorts(self):
 		ports: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
 		try:
-			from serial.tools import list_ports  # type: ignore[import-not-found]
+			try:
+				from serial.tools import list_ports  # type: ignore[import-not-found]
+			except ImportError:
+				from .cserial.tools import list_ports  # type: ignore[no-redef]
 
 			for portInfo in list_ports.comports():
 				device = portInfo.device
@@ -420,6 +497,109 @@ class SynthDriver(BaseSynthDriver):
 		self._inflection = self._percentToParam(value, _MIN_INFLECTION, _MAX_INFLECTION)
 		self._sendSettingCommand(f"@R{self._inflection}")
 
+	def _get_punctuation(self) -> bool:
+		return self._punctuation
+
+	def _set_punctuation(self, value: bool) -> None:
+		self._punctuation = bool(value)
+		self._sendSettingCommand(f"@P{1 if self._punctuation else 0}")
+
+	def _get_spellMode(self) -> bool:
+		return self._spellMode
+
+	def _set_spellMode(self, value: bool) -> None:
+		self._spellMode = bool(value)
+		self._sendSettingCommand(f"@S{1 if self._spellMode else 0}")
+
+	def _get_hypermode(self) -> bool:
+		return self._hypermode
+
+	def _set_hypermode(self, value: bool) -> None:
+		self._hypermode = bool(value)
+		self._sendSettingCommand(f"@H{1 if self._hypermode else 0}")
+
+	def _get_phoneticMode(self) -> bool:
+		return self._phoneticMode
+
+	def _set_phoneticMode(self, value: bool) -> None:
+		self._phoneticMode = bool(value)
+		self._sendSettingCommand(f"@X{1 if self._phoneticMode else 0}")
+
+	def _get_markSpaceRatio(self) -> int:
+		return self._paramToPercent(self._markSpaceRatio, _MIN_MARK_SPACE_RATIO, _MAX_MARK_SPACE_RATIO)
+
+	def _set_markSpaceRatio(self, value: int) -> None:
+		self._markSpaceRatio = self._percentToParam(value, _MIN_MARK_SPACE_RATIO, _MAX_MARK_SPACE_RATIO)
+		self._sendSettingCommand(f"@M{self._markSpaceRatio:02X}")
+
+	def _get_availableSpeakertables(self):
+		tables: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
+		tables["0"] = StringParameterInfo("0", _("Male"))
+		tables["1"] = StringParameterInfo("1", _("Non-male"))
+		current = self.speakerTable
+		if current and current not in tables:
+			tables[current] = StringParameterInfo(current, current)
+		return tables
+
+	def _get_speakerTable(self) -> str:
+		return self._speakerTable
+
+	def _set_speakerTable(self, value: str) -> None:
+		value = (value or "").strip()
+		if value not in ("0", "1"):
+			value = "0"
+		self._speakerTable = value
+		self._sendSettingCommand(f"@K{value}")
+
+	def _get_availableVoicefilters(self):
+		filters: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
+		filters["0"] = StringParameterInfo("0", _("Male (default)"))
+		filters["1"] = StringParameterInfo("1", _("Female (default)"))
+		filters["2"] = StringParameterInfo("2", _("Male (spike)"))
+		filters["3"] = StringParameterInfo("3", _("Female (spike)"))
+		filters["4"] = StringParameterInfo("4", _("Male (cut-down default)"))
+		filters["5"] = StringParameterInfo("5", _("Female (cut-down default)"))
+		filters["6"] = StringParameterInfo("6", _("Male (reduced high-frequency filter)"))
+		filters["7"] = StringParameterInfo("7", _("Female (reduced high-frequency filter)"))
+		current = self.voiceFilter
+		if current and current not in filters:
+			filters[current] = StringParameterInfo(current, current)
+		return filters
+
+	def _get_voiceFilter(self) -> str:
+		return self._voiceFilter
+
+	def _set_voiceFilter(self, value: str) -> None:
+		value = (value or "").strip()
+		if value not in ("0", "1", "2", "3", "4", "5", "6", "7"):
+			value = "0"
+		self._voiceFilter = value
+		self._sendSettingCommand(f"@${value}")
+
+	def _get_availableRoms(self):
+		roms: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
+		roms["1"] = StringParameterInfo("1", _("ROM 1"))
+		roms["2"] = StringParameterInfo("2", _("ROM 2"))
+		roms["3"] = StringParameterInfo("3", _("ROM 3"))
+		roms["4"] = StringParameterInfo("4", _("ROM 4"))
+		current = self.rom
+		if current and current not in roms:
+			roms[current] = StringParameterInfo(current, current)
+		return roms
+
+	def _get_rom(self) -> str:
+		return self._rom
+
+	def _set_rom(self, value: str) -> None:
+		value = (value or "").strip()
+		if value not in ("1", "2", "3", "4"):
+			value = "1"
+		if value == self._rom:
+			return
+		self._rom = value
+		# Selecting a ROM might reset the synth; reconnect on next utterance.
+		self._disconnect()
+
 	def _get_sentencePause(self) -> int:
 		return self._paramToPercent(self._sentencePause, _MIN_SENTENCE_PAUSE, _MAX_SENTENCE_PAUSE)
 
@@ -443,6 +623,14 @@ class SynthDriver(BaseSynthDriver):
 
 	def _settingsPrefix(self) -> bytes:
 		return (
+			f"@={self._rom}, "
+			f"@K{self._speakerTable} "
+			f"@${self._voiceFilter} "
+			f"@P{1 if self._punctuation else 0} "
+			f"@S{1 if self._spellMode else 0} "
+			f"@H{1 if self._hypermode else 0} "
+			f"@X{1 if self._phoneticMode else 0} "
+			f"@M{self._markSpaceRatio:02X} "
 			f"@V{self._voice} "
 			f"@W{self._rate} "
 			f"@F{_hexDigit(self._pitch)} "
@@ -459,24 +647,59 @@ class SynthDriver(BaseSynthDriver):
 			synthDoneSpeaking.notify(synth=self)
 			return
 
-		textParts: list[str] = []
 		indexes: list[int] = []
-		hadIndex = False
+		outputParts: list[bytes] = [self._settingsPrefix()]
+		textBufferParts: list[str] = []
+
+		def flushText() -> None:
+			if not textBufferParts:
+				return
+			text = "".join(textBufferParts)
+			textBufferParts.clear()
+			if text.strip():
+				outputParts.append(_encodeText(text))
 
 		for item in speechSequence:
 			if isinstance(item, str):
 				cleaned = item.replace("@", " ").replace("\r", " ").replace("\n", " ")
-				textParts.append(cleaned)
+				textBufferParts.append(cleaned)
 			elif isinstance(item, IndexCommand):
-				hadIndex = True
-				textParts.append(" @l+ ")
+				flushText()
+				outputParts.append(b" @l+ ")
 				indexes.append(item.index)
+			elif isinstance(item, BreakCommand):
+				flushText()
+				repeats = max(1, round(item.time / 100)) if item.time else 1
+				outputParts.append(b" @Tx " * repeats)
+			elif isinstance(item, PitchCommand):
+				flushText()
+				percent = max(0, min(100, item.newValue))
+				raw = self._percentToParam(percent, _MIN_PITCH, _MAX_PITCH)
+				outputParts.append(f"@F{_hexDigit(raw)} ".encode("ascii", "ignore"))
+			elif isinstance(item, RateCommand):
+				flushText()
+				percent = max(0, min(100, item.newValue))
+				raw = self._percentToParam(percent, _MIN_RATE, _MAX_RATE)
+				outputParts.append(f"@W{raw} ".encode("ascii", "ignore"))
+			elif isinstance(item, VolumeCommand):
+				flushText()
+				percent = max(0, min(100, item.newValue))
+				raw = self._percentToParam(percent, _MIN_VOLUME, _MAX_VOLUME)
+				outputParts.append(f"@A{_hexDigit(raw)} ".encode("ascii", "ignore"))
+			elif isinstance(item, CharacterModeCommand):
+				flushText()
+				outputParts.append(f"@S{1 if item.state else 0} ".encode("ascii", "ignore"))
+			elif isinstance(item, PhonemeCommand):
+				flushText()
+				if item.text:
+					cleaned = item.text.replace("@", " ").replace("\r", " ").replace("\n", " ")
+					textBufferParts.append(cleaned)
 
-		text = "".join(textParts).strip()
-		data = self._settingsPrefix() + _encodeText(text) + _CR
+		flushText()
+		data = b"".join(outputParts) + _CR
 		self._queueWrite(data, indexes=tuple(indexes))
 
-		if not hadIndex:
+		if not indexes:
 			synthDoneSpeaking.notify(synth=self)
 
 	def cancel(self):
