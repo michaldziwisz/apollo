@@ -1,3 +1,7 @@
+## 0.1.9
+
+- Fix a stray “1” being spoken at NVDA startup by selecting the default ROM using `@=T` instead of `@=1`.
+
 ## 0.1.8
 
 - Fix delayed speech stopping (Ctrl) by purging the serial output buffer on cancel.
