@@ -1,3 +1,7 @@
+## 0.1.74
+
+- No functional changes; internal refactor and new unit tests/CI.
+
 ## 0.1.73
 
 - No functional changes; fixes the GitHub release workflow packaging.

@@ -20,10 +20,10 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"Adds support for Dolphin Apollo 2 / PC 2 Card / Juno serial speech synthesizers."
 	),
-	addon_version="0.1.73",
+	addon_version="0.1.74",
 	# Translators: What's new content for the add-on version to be shown in the add-on store.
 	addon_changelog=_(
-		"No functional changes; fixes the GitHub release workflow packaging."
+		"No functional changes; internal refactor and new unit tests/CI."
 	),
 	addon_author="PomPa <Kontakt@napompuj.SE>",
 	addon_url="https://github.com/michaldziwisz/apollo",
