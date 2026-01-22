@@ -57,6 +57,14 @@ jobs:
     - uses: actions/checkout@v4
     - name: download releases files
       uses: actions/download-artifact@v4
+    - name: Prepare release files
+      shell: bash
+      run: |
+        set -euo pipefail
+        # `download-artifact` extracts each artifact into its own directory by default.
+        # Copy release assets into the workspace root so glob patterns below work reliably.
+        find . -maxdepth 4 -name '*.nvda-addon' -exec cp -v {} . \;
+        find . -maxdepth 4 -name '*.pot' -exec cp -v {} . \;
     - name: Display structure of downloaded files
       run: ls -R
     - name: Calculate sha256
