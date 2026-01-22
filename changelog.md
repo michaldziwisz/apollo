@@ -1,10 +1,14 @@
-## 0.1.71
+## 0.1.73
 
-- Reduce freezes on flaky serial ports by backing off after write timeouts and making cancel non-blocking.
+- No functional changes; fixes the GitHub release workflow packaging.
 
 ## 0.1.72
 
 - Improve responsiveness by cancelling in-flight writes (when supported by pyserial) and using smaller serial write chunks.
+
+## 0.1.71
+
+- Reduce freezes on flaky serial ports by backing off after write timeouts and making cancel non-blocking.
 
 ## 0.1.70
 
