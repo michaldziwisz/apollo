@@ -42,6 +42,11 @@ Indexing uses Apollo `@I?` and `@I+` commands (required for continuous reading /
 
 `BreakCommand` maps to `@Tx` (~100 ms pause).
 
+Serial settings:
+
+- `Serial port` / `Serial baud rate` set the host COM port parameters.
+- `Apply baud rate to synthesizer now (@Y)` attempts a one-shot `@Y` switch on the device (may fail on some firmware/USB adapters).
+
 ## ROM/language detection
 
 The driver queries the synthesizer using `@L` and uses the returned slot info to label ROM slots in NVDA settings.
