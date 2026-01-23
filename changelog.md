@@ -1,3 +1,9 @@
+## 0.1.81
+
+- Fix a regression where `cancel()` was accidentally nested inside `speak()`, breaking interruption and sometimes causing synth errors.
+- Improve `_ensureConnected(maxDuration=...)` so busy/locked COM ports (permission denied) are retried briefly within the allowed budget.
+- Avoid starting background connection attempts / serial writes while NVDA is applying profile settings (prevents COM port grabs on failed synth switch).
+
 ## 0.1.80
 
 - Fix intermittent cancel during fast navigation by tracking in-flight speech writes (so mute isn't skipped when the write queue is empty but a write is still in progress).
