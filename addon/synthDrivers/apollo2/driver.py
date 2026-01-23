@@ -477,6 +477,7 @@ class SynthDriver(BaseSynthDriver):
 		self._driverInitTime = time.monotonic()
 		self._didInitialConnectCheck = False
 		self._lastDetectedPort: Optional[str] = None
+		self._isLoadingSettings = False
 
 		self._writeThread = threading.Thread(
 			target=self._writeLoop,
@@ -500,22 +501,25 @@ class SynthDriver(BaseSynthDriver):
 		self._indexPollThread.start()
 
 	def loadSettings(self):
-		super().loadSettings()
-		# NVDA can call `loadSettings()` after some initial speech has already been queued during startup.
-		# Ensure Apollo is re-synced to the loaded profile values even if the Voice Settings dialog is
-		# never opened.
-		self._requireSettingsSync()
-		# Load a cached auto-detect hint (if present). This lets "Auto (detect)" avoid scanning.
+		# While NVDA is applying profile values, suppress background connection attempts and serial writes.
+		# This prevents a failed synth switch (wrong port/device missing) from leaving background threads
+		# attempting to connect and holding the COM port.
+		self._isLoadingSettings = True
 		try:
-			import config  # type: ignore[import-not-found]
+			super().loadSettings()
+			# Load a cached auto-detect hint (if present). This lets "Auto (detect)" avoid scanning.
+			try:
+				import config  # type: ignore[import-not-found]
 
-			speechSection = config.conf.get("speech") if hasattr(config, "conf") else None
-			driverSection = speechSection.get(self.name) if speechSection else None
-			cachedPort = driverSection.get("lastDetectedPort") if driverSection else None
-			if cachedPort:
-				self._lastDetectedPort = str(cachedPort)
-		except Exception:
-			pass
+				speechSection = config.conf.get("speech") if hasattr(config, "conf") else None
+				driverSection = speechSection.get(self.name) if speechSection else None
+				cachedPort = driverSection.get("lastDetectedPort") if driverSection else None
+				if cachedPort:
+					self._lastDetectedPort = str(cachedPort)
+			except Exception:
+				pass
+		finally:
+			self._isLoadingSettings = False
 
 		# Safety: perform a bounded connection attempt during synth switch/startup.
 		# If we can't talk to Apollo quickly (wrong port/device missing), fail so NVDA can keep
@@ -524,11 +528,15 @@ class SynthDriver(BaseSynthDriver):
 			self._didInitialConnectCheck = True
 			if not self._ensureConnected(maxDuration=_INITIAL_CONNECT_MAX_SECONDS):
 				raise RuntimeError(
-					f"Apollo not detected (port={self._port}, baud={self._baudRate}). "
-					"Check the serial port selection or use 'Auto (detect)'."
-				)
+						f"Apollo not detected (port={self._port}, baud={self._baudRate}). "
+						"Check the serial port selection or use 'Auto (detect)'."
+					)
+
+		# NVDA can call `loadSettings()` after some initial speech has already been queued during startup.
+		# Ensure Apollo is re-synced to the loaded profile values even if the Voice Settings dialog is
+		# never opened.
+		self._requireSettingsSync()
 		# Connect in the background so opening the Voice Settings dialog never blocks the UI.
-		# We still start it immediately after settings are loaded to reduce races with braille auto-probing.
 		self._startBackgroundConnect()
 		self._queueSettingsSync()
 
@@ -541,6 +549,11 @@ class SynthDriver(BaseSynthDriver):
 
 	def _startBackgroundConnect(self) -> None:
 		if self._stopEvent.is_set():
+			return
+		if self._isLoadingSettings:
+			return
+		now = time.monotonic()
+		if now < self._connectBackoffUntil:
 			return
 		if self._getSerial() is not None:
 			return
@@ -654,6 +667,8 @@ class SynthDriver(BaseSynthDriver):
 	def _queueSettingsSync(self) -> None:
 		if self._stopEvent.is_set() or not self._needsSettingsSync:
 			return
+		if self._isLoadingSettings:
+			return
 		if self._settingsSyncQueued:
 			return
 		self._settingsSyncQueued = True
@@ -668,6 +683,8 @@ class SynthDriver(BaseSynthDriver):
 
 	def _queueFormantSync(self) -> None:
 		if self._stopEvent.is_set():
+			return
+		if self._isLoadingSettings:
 			return
 		if self._formantSyncQueued:
 			return
@@ -685,7 +702,17 @@ class SynthDriver(BaseSynthDriver):
 			if self._getSerial() is not None:
 				return True
 
+			def isPortBusyError(exc: Exception) -> bool:
+				msg = str(exc)
+				return (
+					"PermissionError" in msg
+					or "Access is denied" in msg
+					or "Odmowa dostępu" in msg
+					or "errno 13" in msg
+				)
+
 			connectReasons: list[str] = []
+			sawBusyPortError = False
 			desiredBaudRate = self._baudRate if self._baudRate in _SUPPORTED_BAUD_RATES else _DEFAULT_BAUD_RATE
 			baudTryOrder: list[int] = []
 
@@ -765,6 +792,9 @@ class SynthDriver(BaseSynthDriver):
 					return ser
 				except Exception as e:
 					connectReasons.append(f"{port}@{baudRate} open failed: {type(e).__name__}: {e}")
+					nonlocal sawBusyPortError
+					if isPortBusyError(e):
+						sawBusyPortError = True
 					return None
 
 			def closeSerial(ser: Optional[serial.Serial]) -> None:  # type: ignore[misc]
@@ -1013,24 +1043,36 @@ class SynthDriver(BaseSynthDriver):
 						log.info(f"Apollo connected on {port} at {baudRate} baud.")
 					return True
 
-			for port in getCandidatePorts():
-				if overallDeadline is not None and time.monotonic() > overallDeadline:
-					break
-				for baudRate in baudTryOrder:
+			while True:
+				sawBusyPortError = False
+				for port in getCandidatePorts():
 					if overallDeadline is not None and time.monotonic() > overallDeadline:
 						break
-					ser = openSerial(port, baudRate)
-					if ser is None:
-						continue
-					if ensureIndexingAndProbe(ser):
-						finalBaud = baudRate
-						switched = trySwitchSynthBaudRate(ser, port=port, currentBaud=baudRate)
-						if switched is None:
-							closeSerial(ser)
+					for baudRate in baudTryOrder:
+						if overallDeadline is not None and time.monotonic() > overallDeadline:
+							break
+						ser = openSerial(port, baudRate)
+						if ser is None:
 							continue
-						finalBaud = switched
-						return finalizeConnection(port, finalBaud, ser)
-					closeSerial(ser)
+						if ensureIndexingAndProbe(ser):
+							finalBaud = baudRate
+							switched = trySwitchSynthBaudRate(ser, port=port, currentBaud=baudRate)
+							if switched is None:
+								closeSerial(ser)
+								continue
+							finalBaud = switched
+							return finalizeConnection(port, finalBaud, ser)
+						closeSerial(ser)
+
+				# If the port was temporarily busy, wait a moment and retry within the allowed budget.
+				if overallDeadline is None:
+					break
+				remaining = overallDeadline - time.monotonic()
+				if remaining <= 0:
+					break
+				if not sawBusyPortError:
+					break
+				time.sleep(min(0.1, remaining))
 
 			# Avoid log spam when some other NVDA component temporarily grabs the port.
 			now = time.monotonic()
@@ -2404,15 +2446,15 @@ class SynthDriver(BaseSynthDriver):
 		data = b"".join(outputParts) + _CR
 		self._queueWrite(data, indexes=tuple(indexes))
 
-		def cancel(self):
-			wasSpeaking = False
-			hadPendingQueue = False
-			inFlightSpeech = False
-			with self._indexLock:
-				wasSpeaking = self._isSpeaking or bool(self._pendingIndexes)
-				hadPendingQueue = not self._writeQueue.empty()
-			with self._writeStateLock:
-				inFlightSpeech = self._isWritingSpeech
+	def cancel(self):
+		wasSpeaking = False
+		hadPendingQueue = False
+		inFlightSpeech = False
+		with self._indexLock:
+			wasSpeaking = self._isSpeaking or bool(self._pendingIndexes)
+			hadPendingQueue = not self._writeQueue.empty()
+		with self._writeStateLock:
+			inFlightSpeech = self._isWritingSpeech
 
 		# Abort any in-flight write item and discard queued speech immediately.
 		self._cancelGeneration += 1
@@ -2427,7 +2469,6 @@ class SynthDriver(BaseSynthDriver):
 				if item is None or (item is not None and not item.cancelable and not item.isMute):
 					preserved.append(item)
 		except queue.Empty:
-			pass
 			if ser is not None and (wasSpeaking or hadPendingQueue or inFlightSpeech):
 				# Ensure the mute reaches the synthesizer quickly even if the UI thread can't acquire the
 				# serial lock (e.g. while the write thread is mid-write). This write item clears the OS TX
