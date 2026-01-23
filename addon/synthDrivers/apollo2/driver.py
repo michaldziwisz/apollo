@@ -408,6 +408,8 @@ class SynthDriver(BaseSynthDriver):
 		# Needs to be re-entrant because `_disconnect()` may be called from within a write while this
 		# lock is already held.
 		self._serialIoLock = threading.RLock()
+		self._writeStateLock = threading.Lock()
+		self._isWritingSpeech = False
 		self._connectLock = threading.Lock()
 		self._connectThread: Optional[threading.Thread] = None
 		self._lastConnectErrorLogTime = 0.0
@@ -1310,20 +1312,29 @@ class SynthDriver(BaseSynthDriver):
 					self._writeQueue.put(item)
 					continue
 
-			if not writeBytes(
-				ser,
-				item.data,
-				cancelable=item.cancelable,
-				generation=item.generation,
-				flush=not item.cancelable,
-			):
-				continue
+				writingSpeech = bool(item.indexes) and item.cancelable and bool(item.data)
+				if writingSpeech:
+					with self._writeStateLock:
+						self._isWritingSpeech = True
+				try:
+					if not writeBytes(
+						ser,
+						item.data,
+						cancelable=item.cancelable,
+						generation=item.generation,
+						flush=not item.cancelable,
+					):
+						continue
+				finally:
+					if writingSpeech:
+						with self._writeStateLock:
+							self._isWritingSpeech = False
 
-			if item.indexes:
-				with self._indexLock:
-					if not item.cancelable or item.generation == self._cancelGeneration:
-						self._pendingIndexes.extend(item.indexes)
-						self._isSpeaking = True
+					if item.indexes:
+						with self._indexLock:
+							if not item.cancelable or item.generation == self._cancelGeneration:
+								self._pendingIndexes.extend(item.indexes)
+								self._isSpeaking = True
 
 	def _pollLoop(self) -> None:
 		while not self._stopEvent.is_set():
@@ -2279,11 +2290,13 @@ class SynthDriver(BaseSynthDriver):
 					textChars += len(item)
 					if textChars > 1:
 						break
-			if textChars > 1:
-				with self._indexLock:
-					hasSpeech = self._isSpeaking or bool(self._pendingIndexes)
-				if hasSpeech or not self._writeQueue.empty():
-					self.cancel()
+				if textChars > 1:
+					with self._writeStateLock:
+						inFlightSpeech = self._isWritingSpeech
+					with self._indexLock:
+						hasSpeech = self._isSpeaking or bool(self._pendingIndexes)
+					if inFlightSpeech or hasSpeech or not self._writeQueue.empty():
+						self.cancel()
 
 		# Never block the UI thread on serial I/O. If we're disconnected, queue speech and
 		# let the background write thread establish the connection.
@@ -2391,12 +2404,15 @@ class SynthDriver(BaseSynthDriver):
 		data = b"".join(outputParts) + _CR
 		self._queueWrite(data, indexes=tuple(indexes))
 
-	def cancel(self):
-		wasSpeaking = False
-		hadPendingQueue = False
-		with self._indexLock:
-			wasSpeaking = self._isSpeaking or bool(self._pendingIndexes)
-			hadPendingQueue = not self._writeQueue.empty()
+		def cancel(self):
+			wasSpeaking = False
+			hadPendingQueue = False
+			inFlightSpeech = False
+			with self._indexLock:
+				wasSpeaking = self._isSpeaking or bool(self._pendingIndexes)
+				hadPendingQueue = not self._writeQueue.empty()
+			with self._writeStateLock:
+				inFlightSpeech = self._isWritingSpeech
 
 		# Abort any in-flight write item and discard queued speech immediately.
 		self._cancelGeneration += 1
@@ -2412,11 +2428,11 @@ class SynthDriver(BaseSynthDriver):
 					preserved.append(item)
 		except queue.Empty:
 			pass
-		if ser is not None and (wasSpeaking or hadPendingQueue):
-			# Ensure the mute reaches the synthesizer quickly even if the UI thread can't acquire the
-			# serial lock (e.g. while the write thread is mid-write). This write item clears the OS TX
-			# buffer and sends Control+X plus an indexing enable command.
-			self._queueWrite(_MUTE + self._indexEnableCommand, cancelable=False, isMute=True)
+			if ser is not None and (wasSpeaking or hadPendingQueue or inFlightSpeech):
+				# Ensure the mute reaches the synthesizer quickly even if the UI thread can't acquire the
+				# serial lock (e.g. while the write thread is mid-write). This write item clears the OS TX
+				# buffer and sends Control+X plus an indexing enable command.
+				self._queueWrite(_MUTE + self._indexEnableCommand, cancelable=False, isMute=True)
 		for item in preserved:
 			self._writeQueue.put(item)
 
