@@ -1,3 +1,7 @@
+## 0.1.79
+
+- Improve interruption reliability: queue a dedicated mute write item so Control+X reaches the device quickly even during in-flight writes.
+
 ## 0.1.78
 
 - Fix a regression in serial connection probing (auto port / baud switching helpers).
