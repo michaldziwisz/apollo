@@ -1413,29 +1413,29 @@ class SynthDriver(BaseSynthDriver):
 					self._writeQueue.put(item)
 					continue
 
-				writingSpeech = bool(item.indexes) and item.cancelable and bool(item.data)
+			writingSpeech = bool(item.indexes) and item.cancelable and bool(item.data)
+			if writingSpeech:
+				with self._writeStateLock:
+					self._isWritingSpeech = True
+			try:
+				if not writeBytes(
+					ser,
+					item.data,
+					cancelable=item.cancelable,
+					generation=item.generation,
+					flush=not item.cancelable,
+				):
+					continue
+			finally:
 				if writingSpeech:
 					with self._writeStateLock:
-						self._isWritingSpeech = True
-				try:
-					if not writeBytes(
-						ser,
-						item.data,
-						cancelable=item.cancelable,
-						generation=item.generation,
-						flush=not item.cancelable,
-					):
-						continue
-				finally:
-					if writingSpeech:
-						with self._writeStateLock:
-							self._isWritingSpeech = False
+						self._isWritingSpeech = False
 
-					if item.indexes:
-						with self._indexLock:
-							if not item.cancelable or item.generation == self._cancelGeneration:
-								self._pendingIndexes.extend(item.indexes)
-								self._isSpeaking = True
+				if item.indexes:
+					with self._indexLock:
+						if not item.cancelable or item.generation == self._cancelGeneration:
+							self._pendingIndexes.extend(item.indexes)
+							self._isSpeaking = True
 
 	def _pollLoop(self) -> None:
 		while not self._stopEvent.is_set():
