@@ -1,3 +1,7 @@
+## 0.1.84
+
+- Fix probing on some firmware variants by adding required delimiters (trailing space) to `@V?` / `@I?` / `@1?` queries.
+
 ## 0.1.83
 
 - Fall back to Apollo indexing command variant `@1?` / `@1+` if the default `@I?` / `@I+` probe doesn't respond.
