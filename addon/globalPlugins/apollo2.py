@@ -26,7 +26,9 @@ except ImportError:
 
 _SYNTH_NAME = "apollo2"
 _AUTO_PORT = "auto"
-_SUPPORTED_BAUD_RATES = (300, 1200, 9600, 19200, 28800, 57600)
+# Apollo is most stable (and power-up defaults) at 9600 baud. We intentionally only support 9600
+# to avoid probing/operating at other rates which can cause false negatives and unstable behavior.
+_SUPPORTED_BAUD_RATES = (9600,)
 _NO_BRAILLE = "noBraille"
 _PROBE_COMMAND = b"@V?"
 _PROBE_PREFIX = b"V"
@@ -71,6 +73,37 @@ def _importSerial():
 		return None
 
 
+def _configureSerialForApollo(ser) -> None:
+	"""Best-effort serial configuration matching the synth driver's expectations."""
+	# Apollo uses RTS as a direction/handshake line for 2-way comms. Use pyserial RS485 mode
+	# (RTS high for TX, low for RX) so the device can reply to @c? queries.
+	try:
+		try:
+			from serial import rs485  # type: ignore[import-not-found]
+		except Exception:
+			from synthDrivers.apollo2.cserial import rs485  # type: ignore[import-not-found,no-redef]
+		try:
+			ser.rs485_mode = rs485.RS485Settings()
+		except Exception:
+			pass
+	except Exception:
+		pass
+
+	try:
+		ser.dsrdtr = False
+	except Exception:
+		pass
+	try:
+		ser.dtr = True
+	except Exception:
+		pass
+	try:
+		ser.reset_input_buffer()
+		ser.reset_output_buffer()
+	except Exception:
+		pass
+
+
 def _probeApolloResponse(ser, *, timeout: float = 0.35) -> bool:
 	"""Best-effort probe that matches the driver's "@c?" response shape (e.g. @V? -> Vhh)."""
 	try:
@@ -113,10 +146,7 @@ def _testApolloConnection(*, port: str, baud: int) -> tuple[bool, Optional[str]]
 	serial = _importSerial()
 	if serial is None:
 		return False, None
-	try:
-		baudRate = int(baud)
-	except Exception:
-		baudRate = 9600
+	baudRate = 9600
 
 	candidatePorts: list[str] = []
 	port = (port or "").strip() or _AUTO_PORT
@@ -139,6 +169,7 @@ def _testApolloConnection(*, port: str, baud: int) -> tuple[bool, Optional[str]]
 		except Exception:
 			continue
 		try:
+			_configureSerialForApollo(ser)
 			if _probeApolloResponse(ser, timeout=0.35):
 				return True, candidate
 		finally:
@@ -190,12 +221,7 @@ def _readCurrentPortAndBaud() -> tuple[str, int]:
 		port = str(driverSection.get("port") or _AUTO_PORT).strip() or _AUTO_PORT
 	except Exception:
 		port = _AUTO_PORT
-	try:
-		baud = int(driverSection.get("baudRate") or baud)
-	except Exception:
-		baud = 9600
-	if baud not in _SUPPORTED_BAUD_RATES:
-		baud = 9600
+	baud = 9600
 	return port, baud
 
 
@@ -205,7 +231,7 @@ def _writePortAndBaud(*, port: str, baud: int) -> bool:
 		return False
 	try:
 		driverSection["port"] = (port or "").strip() or _AUTO_PORT
-		driverSection["baudRate"] = str(int(baud))
+		driverSection["baudRate"] = "9600"
 		try:
 			config.conf.save()
 		except Exception:
@@ -271,11 +297,7 @@ if wx is not None and gui is not None and config is not None:
 				self._portChoice.SetSelection(0)
 
 			baudLabels = [str(b) for b in _SUPPORTED_BAUD_RATES]
-			self._baudChoice = wx.Choice(self, choices=baudLabels)
-			try:
-				self._baudChoice.SetSelection(_SUPPORTED_BAUD_RATES.index(currentBaud))
-			except Exception:
-				self._baudChoice.SetSelection(0)
+			self._baudLabel = wx.StaticText(self, label=baudLabels[0] if baudLabels else "9600")
 
 			sizer = wx.BoxSizer(wx.VERTICAL)
 			form = wx.FlexGridSizer(cols=2, hgap=10, vgap=8)
@@ -285,7 +307,7 @@ if wx is not None and gui is not None and config is not None:
 			form.Add(self._portChoice, 1, wx.EXPAND)
 
 			form.Add(wx.StaticText(self, label=_("Baud rate:")), 0, wx.ALIGN_CENTER_VERTICAL)
-			form.Add(self._baudChoice, 1, wx.EXPAND)
+			form.Add(self._baudLabel, 0, wx.ALIGN_CENTER_VERTICAL)
 
 			sizer.Add(form, 1, wx.ALL | wx.EXPAND, 12)
 
@@ -334,10 +356,6 @@ if wx is not None and gui is not None and config is not None:
 				port = self._portValues[self._portChoice.GetSelection()]
 			except Exception:
 				port = _AUTO_PORT
-			try:
-				baud = _SUPPORTED_BAUD_RATES[self._baudChoice.GetSelection()]
-			except Exception:
-				baud = 9600
 			try:
 				disableBrailleAutoDetect = bool(self._disableBrailleAutoDetectCheck.GetValue())
 			except Exception:

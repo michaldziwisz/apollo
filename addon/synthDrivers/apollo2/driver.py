@@ -56,19 +56,15 @@ except ImportError:
 _DEFAULT_PORT = "COM3"
 _AUTO_PORT = "auto"
 _DEFAULT_BAUD_RATE = 9600
-_SUPPORTED_BAUD_RATES = (300, 1200, 9600, 19200, 28800, 57600)
+# Apollo is most stable (and power-up defaults) at 9600 baud. We intentionally only support 9600
+# to avoid probing/operating at other rates which can cause false negatives and unstable behavior
+# on some USB-serial adapters / firmware variants.
+_SUPPORTED_BAUD_RATES = (9600,)
 # How long we wait for a valid indexing probe when NVDA switches to this synth.
 # If the configured port is wrong (or the device is missing), failing fast prevents NVDA
 # from going silent and lets it keep using the previously selected synthesizer.
 _INITIAL_CONNECT_MAX_SECONDS = 2.0
-_BAUD_RATE_TO_APOLLO_SELECTOR: dict[int, str] = {
-	300: "1",
-	1200: "2",
-	9600: "3",
-	19200: "4",
-	28800: "5",
-	57600: "6",
-}
+_BAUD_RATE_TO_APOLLO_SELECTOR: dict[int, str] = {9600: "3"}
 _INDEX_POLL_INTERVAL_SECONDS = 0.10
 _ROM_INFO_REQUEST_MIN_INTERVAL_SECONDS = 5.0
 _ROM_INFO_REQUEST_TIMEOUT_SECONDS = 2.0
@@ -374,13 +370,6 @@ class SynthDriver(BaseSynthDriver):
 			# Translators: Label for a setting in the voice settings dialog.
 			_("Serial &baud rate"),
 			defaultVal=str(_DEFAULT_BAUD_RATE),
-		),
-		BooleanDriverSetting(
-			"applyBaudRateNow",
-			# Translators: Label for a setting in the voice settings dialog.
-			_("Advanced: Apply baud rate to &synthesizer now (@Y)"),
-			availableInSettingsRing=False,
-			defaultVal=False,
 		),
 		BooleanDriverSetting(
 			"announceNvdaStartup",
@@ -724,20 +713,13 @@ class SynthDriver(BaseSynthDriver):
 				if rate in _SUPPORTED_BAUD_RATES and rate not in baudTryOrder:
 					baudTryOrder.append(rate)
 
+			# Apollo is most stable at its power-up default 9600 baud. Avoid probing multiple baud rates
+			# during synth switch/startup to reduce false negatives and unexpected behavior.
 			addBaud(desiredBaudRate)
 			addBaud(_DEFAULT_BAUD_RATE)
-			# Prefer higher, commonly-used baud rates early so the bounded startup check can still
-			# find the device even if the configured baud rate doesn't match the synth's current state.
-			# Low rates are kept for completeness but are tried last.
-			for rate in (57600, 28800, 19200, 1200, 300):
-				addBaud(rate)
-			for rate in _SUPPORTED_BAUD_RATES:
-				addBaud(rate)
-			# When NVDA is switching synthesizers we only have a short budget to detect the device.
-			# If the user is on a modern USB/serial setup (>= 9600), skip very low baud probing here
-			# so we can try all realistic rates within `_INITIAL_CONNECT_MAX_SECONDS`.
-			if overallDeadline is not None and desiredBaudRate >= 9600:
-				baudTryOrder = [rate for rate in baudTryOrder if rate >= 9600]
+			if overallDeadline is None and desiredBaudRate != _DEFAULT_BAUD_RATE:
+				for rate in _SUPPORTED_BAUD_RATES:
+					addBaud(rate)
 
 			def getCandidatePorts() -> tuple[str, ...]:
 				requested = (self._port or "").strip() or _DEFAULT_PORT
@@ -783,19 +765,20 @@ class SynthDriver(BaseSynthDriver):
 						dsrdtr=False,
 						xonxoff=False,
 					)
-					# Ensure hardware/software flow control is disabled regardless of the user's
-					# port settings in Windows Device Manager. Some on-board COM ports can otherwise
-					# block writes indefinitely (CTS/DSR not asserted), which manifests as write timeouts.
+					# Apollo uses RTS as a direction/handshake line for 2-way comms.
+					# Use pyserial RS485 mode (RTS high for TX, low for RX) to avoid blocking replies
+					# from the device (indexing, @c? queries, etc.).
 					try:
-						ser.rtscts = False
 						ser.dsrdtr = False
-						ser.xonxoff = False
 					except Exception:
 						pass
-					# Keep DTR/RTS asserted (common expectation for older serial peripherals).
+					try:
+						ser.rs485_mode = rs485.RS485Settings()
+					except Exception:
+						pass
+					# Keep DTR asserted (common expectation for older serial peripherals).
 					try:
 						ser.dtr = True
-						ser.rts = True
 					except Exception:
 						pass
 					try:
