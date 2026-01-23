@@ -1,3 +1,24 @@
+## 0.1.78
+
+- Fix a regression in serial connection probing (auto port / baud switching helpers).
+- Add a “Test connection” button and `NVDA+Shift+A` action to safely switch to Apollo 2 after verifying the port.
+
+## 0.1.77
+
+- Fix startup regression where the driver failed to load under NVDA (`_AUTO_PORT` constant scope).
+
+## 0.1.76
+
+- Improve interruption: when a new non-trivial utterance arrives while Apollo is still speaking/queued,
+  the driver cancels the previous speech so navigation commands interrupt immediately.
+
+## 0.1.75
+
+- Make `Serial port` default to `Auto (detect)` for safer first-time setup.
+- Fail fast on synth switch if Apollo isn't detected (prevents NVDA going silent on a wrong port).
+- Add a global "Apollo 2: Serial connection" dialog (NVDA+Shift+P) to change port/baud without switching synths.
+- Add an optional checkbox/action to disable braille auto-detection (set display to "No braille") to avoid COM port probing conflicts.
+
 ## 0.1.74
 
 - No functional changes; internal refactor and new unit tests/CI.

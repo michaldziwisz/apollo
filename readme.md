@@ -47,6 +47,13 @@ Serial settings:
 - `Serial port` / `Serial baud rate` set the host COM port parameters.
 - `Apply baud rate to synthesizer now (@Y)` attempts a one-shot `@Y` switch on the device (may fail on some firmware/USB adapters).
 
+To avoid getting stuck with no speech when the port is misconfigured, the add-on fails fast when Apollo isn't detected during
+synth switch/startup. You can configure the serial connection without switching synthesizers via the global command:
+
+- `NVDA+Shift+P`: “Apollo 2: Serial connection…”
+  - Use the “Test connection” button to verify the selected port/baud before switching.
+- `NVDA+Shift+A`: switch synthesizer to Apollo 2 (only if the device is detected).
+
 ## ROM/language detection
 
 The driver queries the synthesizer using `@L` and uses the returned slot info to label ROM slots in NVDA settings.
@@ -60,3 +67,11 @@ This add-on uses a separate add-on ID (`apollo2`) and registers the synthesizer 
 ## Notes
 
 The original Dolphin manual is not included in this repository (copyright).
+
+If your Apollo is connected via a COM port and you don't use a braille display, consider setting NVDA's braille
+display to “No braille” (and disabling braille auto-detection). Otherwise, NVDA may repeatedly probe COM ports via
+braille display drivers, which can lead to `PermissionError` spam in `nvda.log` and occasional responsiveness issues.
+
+The add-on also provides:
+
+- `NVDA+Shift+B`: disable braille auto-detection (switch braille display to “No braille”).

@@ -20,11 +20,9 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"Adds support for Dolphin Apollo 2 / PC 2 Card / Juno serial speech synthesizers."
 	),
-	addon_version="0.1.74",
+	addon_version="0.1.78",
 	# Translators: What's new content for the add-on version to be shown in the add-on store.
-	addon_changelog=_(
-		"No functional changes; internal refactor and new unit tests/CI."
-	),
+	addon_changelog=_("Fix apollo2 startup/connection regression and improve serial setup UX."),
 	addon_author="PomPa <Kontakt@napompuj.SE>",
 	addon_url="https://github.com/michaldziwisz/apollo",
 	addon_sourceURL="https://github.com/michaldziwisz/apollo",
@@ -44,7 +42,7 @@ addon_info = AddonInfo(
 # pythonSources = ["addon/globalPlugins/*.py"]
 # For more information on SCons Glob expressions please take a look at:
 # https://scons.org/doc/production/HTML/scons-user/apd.html
-pythonSources: list[str] = ["addon/synthDrivers/**/*.py"]
+pythonSources: list[str] = ["addon/synthDrivers/**/*.py", "addon/globalPlugins/*.py"]
 
 # Files that contain strings for translation. Usually your python sources
 i18nSources: list[str] = pythonSources + ["buildVars.py"]
