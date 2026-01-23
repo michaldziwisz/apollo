@@ -2432,6 +2432,11 @@ class SynthDriver(BaseSynthDriver):
 		if self._needsSettingsSync:
 			self._queueSettingsSync()
 
+		# Restore base rate at the start of each utterance.
+		# Some operations (e.g. @J soft reset during formant tuning) can temporarily reset speed
+		# to defaults if the device drops bytes or applies the reset asynchronously.
+		outputParts.append(f"@W{self._rate} ".encode("ascii", "ignore"))
+
 		# Restore base pitch at the start of each utterance.
 		# Some Apollo firmware variants appear to only apply pitch at phrase boundaries.
 		outputParts.append(f"@F{_hexDigit(self._pitch)} ".encode("ascii", "ignore"))
