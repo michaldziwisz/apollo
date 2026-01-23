@@ -1,3 +1,7 @@
+## 0.1.80
+
+- Fix intermittent cancel during fast navigation by tracking in-flight speech writes (so mute isn't skipped when the write queue is empty but a write is still in progress).
+
 ## 0.1.79
 
 - Improve interruption reliability: queue a dedicated mute write item so Control+X reaches the device quickly even during in-flight writes.
