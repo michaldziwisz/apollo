@@ -724,20 +724,20 @@ class SynthDriver(BaseSynthDriver):
 				if rate in _SUPPORTED_BAUD_RATES and rate not in baudTryOrder:
 					baudTryOrder.append(rate)
 
-				addBaud(desiredBaudRate)
-				addBaud(_DEFAULT_BAUD_RATE)
-				# Prefer higher, commonly-used baud rates early so the bounded startup check can still
-				# find the device even if the configured baud rate doesn't match the synth's current state.
-				# Low rates are kept for completeness but are tried last.
-				for rate in (57600, 28800, 19200, 1200, 300):
-					addBaud(rate)
-				for rate in _SUPPORTED_BAUD_RATES:
-					addBaud(rate)
-				# When NVDA is switching synthesizers we only have a short budget to detect the device.
-				# If the user is on a modern USB/serial setup (>= 9600), skip very low baud probing here
-				# so we can try all realistic rates within `_INITIAL_CONNECT_MAX_SECONDS`.
-				if overallDeadline is not None and desiredBaudRate >= 9600:
-					baudTryOrder = [rate for rate in baudTryOrder if rate >= 9600]
+			addBaud(desiredBaudRate)
+			addBaud(_DEFAULT_BAUD_RATE)
+			# Prefer higher, commonly-used baud rates early so the bounded startup check can still
+			# find the device even if the configured baud rate doesn't match the synth's current state.
+			# Low rates are kept for completeness but are tried last.
+			for rate in (57600, 28800, 19200, 1200, 300):
+				addBaud(rate)
+			for rate in _SUPPORTED_BAUD_RATES:
+				addBaud(rate)
+			# When NVDA is switching synthesizers we only have a short budget to detect the device.
+			# If the user is on a modern USB/serial setup (>= 9600), skip very low baud probing here
+			# so we can try all realistic rates within `_INITIAL_CONNECT_MAX_SECONDS`.
+			if overallDeadline is not None and desiredBaudRate >= 9600:
+				baudTryOrder = [rate for rate in baudTryOrder if rate >= 9600]
 
 			def getCandidatePorts() -> tuple[str, ...]:
 				requested = (self._port or "").strip() or _DEFAULT_PORT
