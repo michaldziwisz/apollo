@@ -905,16 +905,7 @@ class SynthDriver(BaseSynthDriver):
 				port: str,
 				baudRate: int,
 			) -> bool:  # type: ignore[misc]
-				# First, verify this is really Apollo by using a lightweight "@c?" query.
-				# This avoids relying on indexing support for basic device detection.
 				probeTimeout = 0.35 if overallDeadline is None else 0.25
-				if not probeSettingResponseDirect(
-					ser,
-					command=b"@V?",
-					expectedPrefix=b"V",
-					timeout=probeTimeout,
-				):
-					return False
 
 				def tryIndexingProbe(*, query: bytes, enable: bytes) -> bool:
 					writeAndFlush(ser, _MUTE)

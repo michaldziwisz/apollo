@@ -30,8 +30,9 @@ _AUTO_PORT = "auto"
 # to avoid probing/operating at other rates which can cause false negatives and unstable behavior.
 _SUPPORTED_BAUD_RATES = (9600,)
 _NO_BRAILLE = "noBraille"
-_PROBE_COMMAND = b"@V?"
-_PROBE_PREFIX = b"V"
+_INDEX_QUERY_COMMANDS = (b"@I?", b"@1?")
+_INDEX_RESPONSE_PREFIX = b"I"
+_MUTE = b"\x18"
 _NAK = b"\x15"
 
 
@@ -104,15 +105,23 @@ def _configureSerialForApollo(ser) -> None:
 		pass
 
 
-def _probeApolloResponse(ser, *, timeout: float = 0.35) -> bool:
-	"""Best-effort probe that matches the driver's "@c?" response shape (e.g. @V? -> Vhh)."""
+def _probeApolloIndexResponse(ser, *, command: bytes, timeout: float = 0.35) -> bool:
+	"""Best-effort probe that matches Apollo indexing response shape (IabT/M)."""
 	try:
 		ser.reset_input_buffer()
 	except Exception:
 		pass
 	try:
-		# Some firmware variants only process "@c?" queries after a delimiter, so include a trailing space.
-		ser.write(_PROBE_COMMAND + b" ")
+		ser.write(_MUTE)
+		try:
+			ser.flush()
+		except Exception:
+			pass
+	except Exception:
+		return False
+	try:
+		# Include a delimiter (space) after the query; some firmware variants require it.
+		ser.write(command + b" ")
 		try:
 			ser.flush()
 		except Exception:
@@ -127,16 +136,18 @@ def _probeApolloResponse(ser, *, timeout: float = 0.35) -> bool:
 			return False
 		if not first or first == _NAK:
 			continue
-		if first != _PROBE_PREFIX:
+		if first != _INDEX_RESPONSE_PREFIX:
 			continue
 		try:
-			rest = ser.read(2)
+			rest = ser.read(3)
 		except Exception:
 			return False
-		if len(rest) != 2:
+		if len(rest) != 3:
 			return False
 		hexDigits = b"0123456789abcdefABCDEF"
 		if rest[0:1] not in hexDigits or rest[1:2] not in hexDigits:
+			return False
+		if rest[2:3] not in (b"T", b"M", b"t", b"m"):
 			return False
 		return True
 	return False
@@ -170,8 +181,9 @@ def _testApolloConnection(*, port: str, baud: int) -> tuple[bool, Optional[str]]
 			continue
 		try:
 			_configureSerialForApollo(ser)
-			if _probeApolloResponse(ser, timeout=0.35):
-				return True, candidate
+			for cmd in _INDEX_QUERY_COMMANDS:
+				if _probeApolloIndexResponse(ser, command=cmd, timeout=0.35):
+					return True, candidate
 		finally:
 			try:
 				ser.close()
