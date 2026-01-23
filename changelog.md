@@ -1,3 +1,7 @@
+## 0.1.88
+
+- Fix a regression where Apollo could connect successfully but speech output was dropped due to a write-loop bug.
+
 ## 0.1.87
 
 - Fix connection detection on some hardware by probing Apollo via indexing response (instead of `@V?`).
