@@ -1,3 +1,7 @@
+## 0.1.90
+
+- Fix occasional formant tuning glitches during rapid navigation by avoiding cancellation of in-flight settings writes.
+
 ## 0.1.89
 
 - Fix occasional speed/rate resets while tuning formants by re-applying the current rate at the start of each utterance.
