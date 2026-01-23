@@ -119,6 +119,7 @@ class _WriteItem:
 	cancelable: bool = True
 	isSettingsSync: bool = False
 	isFormantSync: bool = False
+	isMute: bool = False
 
 
 @dataclass(frozen=True)
@@ -560,6 +561,7 @@ class SynthDriver(BaseSynthDriver):
 		cancelable: bool = True,
 		isSettingsSync: bool = False,
 		isFormantSync: bool = False,
+		isMute: bool = False,
 	) -> None:
 		if not self._stopEvent.is_set():
 			self._writeQueue.put(
@@ -572,6 +574,7 @@ class SynthDriver(BaseSynthDriver):
 					cancelable=cancelable,
 					isSettingsSync=isSettingsSync,
 					isFormantSync=isFormantSync,
+					isMute=isMute,
 				),
 			)
 
@@ -1119,6 +1122,28 @@ class SynthDriver(BaseSynthDriver):
 			if item is None:
 				return
 			if item.cancelable and item.generation != self._cancelGeneration:
+				continue
+
+			if item.isMute:
+				ser = self._getSerial()
+				if ser is None:
+					continue
+				with self._serialIoLock:
+					try:
+						ser.reset_output_buffer()
+					except Exception:
+						pass
+					try:
+						ser.write(item.data)
+						try:
+							ser.flush()
+						except Exception:
+							pass
+					except Exception:
+						log.debugWarning("Apollo serial mute failed", exc_info=True)
+						self._disconnect()
+						continue
+				self._suspendPollingAfterWrite(len(item.data))
 				continue
 
 			if item.isSettingsSync:
@@ -2368,26 +2393,33 @@ class SynthDriver(BaseSynthDriver):
 
 	def cancel(self):
 		wasSpeaking = False
+		hadPendingQueue = False
 		with self._indexLock:
 			wasSpeaking = self._isSpeaking or bool(self._pendingIndexes)
+			hadPendingQueue = not self._writeQueue.empty()
 
 		# Abort any in-flight write item and discard queued speech immediately.
 		self._cancelGeneration += 1
 		self._clearIndexes()
+		ser = self._getSerial()
 		preserved: list[Optional[_WriteItem]] = []
 		try:
 			while True:
 				item = self._writeQueue.get_nowait()
 				# Keep non-cancelable items (e.g. settings sync / setting commands) so a cancel doesn't
 				# desynchronize the synth and cause later "reverts".
-				if item is None or (item is not None and not item.cancelable):
+				if item is None or (item is not None and not item.cancelable and not item.isMute):
 					preserved.append(item)
 		except queue.Empty:
 			pass
+		if ser is not None and (wasSpeaking or hadPendingQueue):
+			# Ensure the mute reaches the synthesizer quickly even if the UI thread can't acquire the
+			# serial lock (e.g. while the write thread is mid-write). This write item clears the OS TX
+			# buffer and sends Control+X plus an indexing enable command.
+			self._queueWrite(_MUTE + self._indexEnableCommand, cancelable=False, isMute=True)
 		for item in preserved:
 			self._writeQueue.put(item)
 
-		ser = self._getSerial()
 		if ser is not None:
 			# Ask pyserial to cancel a potentially blocking write (if supported). This helps ensure
 			# that the following output-buffer purge takes effect quickly during fast navigation.
@@ -2397,34 +2429,6 @@ class SynthDriver(BaseSynthDriver):
 					cancelWrite()
 			except Exception:
 				pass
-
-			# Never block NVDA's UI thread on a slow/blocked serial write.
-			# If the write thread is holding the lock (e.g. stuck in a write timeout), skip the
-			# low-level flush/mute and rely on generation-based cancellation.
-			locked = False
-			deadline = time.monotonic() + 0.12
-			while not locked and time.monotonic() < deadline:
-				locked = self._serialIoLock.acquire(timeout=0.01)
-			if locked:
-				try:
-					try:
-						# Drop any pending bytes in the OS TX buffer so the mute command is sent immediately.
-						ser.reset_output_buffer()
-					except Exception:
-						log.debugWarning("Failed to reset Apollo serial output buffer", exc_info=True)
-					try:
-						ser.write(_MUTE)
-					except Exception:
-						log.debugWarning("Apollo serial write failed", exc_info=True)
-					try:
-						ser.write(self._indexEnableCommand)
-					except Exception:
-						log.debugWarning("Apollo serial write failed", exc_info=True)
-				finally:
-					try:
-						self._serialIoLock.release()
-					except Exception:
-						pass
 
 		if wasSpeaking:
 			synthDoneSpeaking.notify(synth=self)
