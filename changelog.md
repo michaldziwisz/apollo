@@ -1,3 +1,7 @@
+## 0.1.91
+
+- Fix a regression where automatic cancellation of queued speech didn’t trigger, causing lag during fast navigation.
+
 ## 0.1.90
 
 - Fix occasional formant tuning glitches during rapid navigation by avoiding cancellation of in-flight settings writes.
