@@ -78,7 +78,8 @@ def _probeApolloResponse(ser, *, timeout: float = 0.35) -> bool:
 	except Exception:
 		pass
 	try:
-		ser.write(_PROBE_COMMAND)
+		# Some firmware variants only process "@c?" queries after a delimiter, so include a trailing space.
+		ser.write(_PROBE_COMMAND + b" ")
 		try:
 			ser.flush()
 		except Exception:

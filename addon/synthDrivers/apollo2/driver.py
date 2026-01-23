@@ -891,7 +891,9 @@ class SynthDriver(BaseSynthDriver):
 					ser.reset_input_buffer()
 				except Exception:
 					pass
-				if not writeAndFlush(ser, command):
+				# Some firmware variants only process "@c?" queries after a delimiter, so include a
+				# trailing space.
+				if not writeAndFlush(ser, command + b" "):
 					return False
 				deadline = time.monotonic() + timeout
 				while time.monotonic() < deadline and not self._stopEvent.is_set():
@@ -933,13 +935,13 @@ class SynthDriver(BaseSynthDriver):
 
 				def tryIndexingProbe(*, query: bytes, enable: bytes) -> bool:
 					writeAndFlush(ser, _MUTE)
-					if probeIndexResponseDirect(ser, command=query, timeout=probeTimeout):
+					if probeIndexResponseDirect(ser, command=query + b" ", timeout=probeTimeout):
 						self._indexQueryCommand = query
 						self._indexEnableCommand = enable
 						self._indexMarkCommand = enable
 						return True
 					writeAndFlush(ser, enable)
-					if probeIndexResponseDirect(ser, command=query, timeout=probeTimeout):
+					if probeIndexResponseDirect(ser, command=query + b" ", timeout=probeTimeout):
 						self._indexQueryCommand = query
 						self._indexEnableCommand = enable
 						self._indexMarkCommand = enable
