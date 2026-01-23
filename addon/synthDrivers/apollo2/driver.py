@@ -2542,14 +2542,16 @@ class SynthDriver(BaseSynthDriver):
 			self._writeQueue.put(item)
 
 		if ser is not None:
-			# Ask pyserial to cancel a potentially blocking write (if supported). This helps ensure
-			# that the following output-buffer purge takes effect quickly during fast navigation.
-			try:
-				cancelWrite = getattr(ser, "cancel_write", None)
-				if callable(cancelWrite):
-					cancelWrite()
-			except Exception:
-				pass
+			# Ask pyserial to cancel a potentially blocking speech write (if supported).
+			# Don't cancel non-speech writes (settings sync), otherwise we may interrupt an in-flight
+			# @J/settings update and leave the synth in a reset/default state.
+			if inFlightSpeech:
+				try:
+					cancelWrite = getattr(ser, "cancel_write", None)
+					if callable(cancelWrite):
+						cancelWrite()
+				except Exception:
+					pass
 
 		if wasSpeaking:
 			synthDoneSpeaking.notify(synth=self)
