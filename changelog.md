@@ -1,3 +1,8 @@
+## 0.1.82
+
+- Improve connection detection: probe Apollo with a lightweight `@V?` query before relying on indexing responses.
+- Improve baud-rate probing order in the bounded startup check (faster detection when the configured baud rate doesn't match the synth).
+
 ## 0.1.81
 
 - Fix a regression where `cancel()` was accidentally nested inside `speak()`, breaking interruption and sometimes causing synth errors.
