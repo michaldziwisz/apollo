@@ -1,3 +1,7 @@
+## 0.1.83
+
+- Fall back to Apollo indexing command variant `@1?` / `@1+` if the default `@I?` / `@I+` probe doesn't respond.
+
 ## 0.1.82
 
 - Improve connection detection: probe Apollo with a lightweight `@V?` query before relying on indexing responses.
