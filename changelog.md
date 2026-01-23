@@ -1,3 +1,8 @@
+## 0.1.86
+
+- Force Apollo serial baud rate to 9600 for stability (no probing/operation at other rates).
+- Improve serial handshake (RS485/RTS toggling) so Apollo can reply to probe commands more reliably.
+
 ## 0.1.85
 
 - Fix a regression where a bad indent prevented baud-rate probing during connection detection (causing immediate “Apollo not detected” failures).
