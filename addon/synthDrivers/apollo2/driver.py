@@ -2386,18 +2386,21 @@ class SynthDriver(BaseSynthDriver):
 			pass
 		else:
 			textChars = 0
+			shouldAutoCancel = False
 			for item in speechSequence:
 				if isinstance(item, str):
 					textChars += len(item)
 					if textChars > 1:
+						shouldAutoCancel = True
 						break
-				if textChars > 1:
-					with self._writeStateLock:
-						inFlightSpeech = self._isWritingSpeech
-					with self._indexLock:
-						hasSpeech = self._isSpeaking or bool(self._pendingIndexes)
-					if inFlightSpeech or hasSpeech or not self._writeQueue.empty():
-						self.cancel()
+
+			if shouldAutoCancel:
+				with self._writeStateLock:
+					inFlightSpeech = self._isWritingSpeech
+				with self._indexLock:
+					hasSpeech = self._isSpeaking or bool(self._pendingIndexes)
+				if inFlightSpeech or hasSpeech or not self._writeQueue.empty():
+					self.cancel()
 
 		# Never block the UI thread on serial I/O. If we're disconnected, queue speech and
 		# let the background write thread establish the connection.
