@@ -1,3 +1,7 @@
+## 0.1.89
+
+- Fix occasional speed/rate resets while tuning formants by re-applying the current rate at the start of each utterance.
+
 ## 0.1.88
 
 - Fix a regression where Apollo could connect successfully but speech output was dropped due to a write-loop bug.
