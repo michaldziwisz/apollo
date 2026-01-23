@@ -57,6 +57,10 @@ _DEFAULT_PORT = "COM3"
 _AUTO_PORT = "auto"
 _DEFAULT_BAUD_RATE = 9600
 _SUPPORTED_BAUD_RATES = (300, 1200, 9600, 19200, 28800, 57600)
+# How long we wait for a valid indexing probe when NVDA switches to this synth.
+# If the configured port is wrong (or the device is missing), failing fast prevents NVDA
+# from going silent and lets it keep using the previously selected synthesizer.
+_INITIAL_CONNECT_MAX_SECONDS = 2.0
 _BAUD_RATE_TO_APOLLO_SELECTOR: dict[int, str] = {
 	300: "1",
 	1200: "2",
@@ -358,7 +362,7 @@ class SynthDriver(BaseSynthDriver):
 			"port",
 			# Translators: Label for a setting in the voice settings dialog.
 			_("Serial &port"),
-			defaultVal=_DEFAULT_PORT,
+			defaultVal=_AUTO_PORT,
 		),
 		DriverSetting(
 			"baudRate",
@@ -396,7 +400,7 @@ class SynthDriver(BaseSynthDriver):
 	def __init__(self):
 		super().__init__()
 
-		self._port: str = _DEFAULT_PORT
+		self._port: str = _AUTO_PORT
 		self._baudRate: int = _DEFAULT_BAUD_RATE
 		self._serial: Optional[serial.Serial] = None  # type: ignore[misc]
 		self._serialLock = threading.Lock()
@@ -468,6 +472,8 @@ class SynthDriver(BaseSynthDriver):
 		self._rom = "1"
 		self._announceNvdaStartup = True
 		self._driverInitTime = time.monotonic()
+		self._didInitialConnectCheck = False
+		self._lastDetectedPort: Optional[str] = None
 
 		self._writeThread = threading.Thread(
 			target=self._writeLoop,
@@ -496,6 +502,28 @@ class SynthDriver(BaseSynthDriver):
 		# Ensure Apollo is re-synced to the loaded profile values even if the Voice Settings dialog is
 		# never opened.
 		self._requireSettingsSync()
+		# Load a cached auto-detect hint (if present). This lets "Auto (detect)" avoid scanning.
+		try:
+			import config  # type: ignore[import-not-found]
+
+			speechSection = config.conf.get("speech") if hasattr(config, "conf") else None
+			driverSection = speechSection.get(self.name) if speechSection else None
+			cachedPort = driverSection.get("lastDetectedPort") if driverSection else None
+			if cachedPort:
+				self._lastDetectedPort = str(cachedPort)
+		except Exception:
+			pass
+
+		# Safety: perform a bounded connection attempt during synth switch/startup.
+		# If we can't talk to Apollo quickly (wrong port/device missing), fail so NVDA can keep
+		# speaking via the previously active synthesizer.
+		if not self._didInitialConnectCheck:
+			self._didInitialConnectCheck = True
+			if not self._ensureConnected(maxDuration=_INITIAL_CONNECT_MAX_SECONDS):
+				raise RuntimeError(
+					f"Apollo not detected (port={self._port}, baud={self._baudRate}). "
+					"Check the serial port selection or use 'Auto (detect)'."
+				)
 		# Connect in the background so opening the Voice Settings dialog never blocks the UI.
 		# We still start it immediately after settings are loaded to reduce races with braille auto-probing.
 		self._startBackgroundConnect()
@@ -641,8 +669,11 @@ class SynthDriver(BaseSynthDriver):
 		self._formantSyncQueued = True
 		self._queueWrite(b"", cancelable=False, isFormantSync=True)
 
-	def _ensureConnected(self) -> bool:
+	def _ensureConnected(self, *, maxDuration: Optional[float] = None) -> bool:
 		with self._connectLock:
+			overallDeadline: Optional[float] = None
+			if maxDuration is not None and maxDuration > 0:
+				overallDeadline = time.monotonic() + maxDuration
 			now = time.monotonic()
 			if now < self._connectBackoffUntil:
 				return False
@@ -674,6 +705,11 @@ class SynthDriver(BaseSynthDriver):
 					candidates = [p.device for p in list_ports.comports() if getattr(p, "device", None)]
 				except Exception:
 					candidates = []
+				# Prefer the last successfully detected port (if any) to avoid scanning.
+				cached = (self._lastDetectedPort or "").strip()
+				if cached and cached in candidates:
+					candidates.remove(cached)
+					candidates.insert(0, cached)
 				if _DEFAULT_PORT not in candidates:
 					candidates.append(_DEFAULT_PORT)
 				seen: set[str] = set()
@@ -752,6 +788,11 @@ class SynthDriver(BaseSynthDriver):
 				command: bytes,
 				timeout: float = 0.35,
 			) -> bool:  # type: ignore[misc]
+				if overallDeadline is not None:
+					remaining = overallDeadline - time.monotonic()
+					if remaining <= 0:
+						return False
+					timeout = min(timeout, remaining)
 				# Probe Apollo indexing without relying on the background read thread.
 				try:
 					ser.reset_input_buffer()
@@ -767,20 +808,21 @@ class SynthDriver(BaseSynthDriver):
 						return False
 					if not first or first == _NAK:
 						continue
-					if first == b"I":
-						try:
-							rest = ser.read(3)
-						except Exception:
-							return False
-						if len(rest) != 3:
-							return False
-						# Validate the response shape to avoid false positives at the wrong baud rate.
-						hexDigits = b"0123456789abcdefABCDEF"
-						if rest[0:1] not in hexDigits or rest[1:2] not in hexDigits:
-							return False
-						if rest[2:3] not in (b"T", b"M", b"t", b"m"):
-							return False
-						return True
+					if first != b"I":
+						continue
+					try:
+						rest = ser.read(3)
+					except Exception:
+						return False
+					if len(rest) != 3:
+						return False
+					# Validate the response shape to avoid false positives at the wrong baud rate.
+					hexDigits = b"0123456789abcdefABCDEF"
+					if rest[0:1] not in hexDigits or rest[1:2] not in hexDigits:
+						return False
+					if rest[2:3] not in (b"T", b"M", b"t", b"m"):
+						return False
+					return True
 				return False
 
 			def ensureIndexingAndProbe(ser: serial.Serial) -> bool:  # type: ignore[misc]
@@ -797,6 +839,8 @@ class SynthDriver(BaseSynthDriver):
 				return False
 
 			def trySwitchSynthBaudRate(ser: serial.Serial, *, port: str, currentBaud: int) -> Optional[int]:
+				if overallDeadline is not None and time.monotonic() > overallDeadline:
+					return None
 				# Only try @Y switching when explicitly requested by the user via the one-shot action.
 				if not self._pendingApplyBaudRate:
 					return currentBaud
@@ -932,21 +976,44 @@ class SynthDriver(BaseSynthDriver):
 				self._connectBackoffUntil = 0.0
 				with self._serialLock:
 					self._serial = ser
-				log.info(
-					"Apollo indexing commands: query=%r enable=%r mark=%r",
-					self._indexQueryCommand,
-					self._indexEnableCommand,
-					self._indexMarkCommand,
-				)
-				if self._port == _AUTO_PORT:
-					log.info(f"Apollo detected on {port} at {baudRate} baud.")
-				else:
-					log.info(f"Apollo connected on {port} at {baudRate} baud.")
-				return True
+					log.info(
+						"Apollo indexing commands: query=%r enable=%r mark=%r",
+						self._indexQueryCommand,
+						self._indexEnableCommand,
+						self._indexMarkCommand,
+					)
+					if self._port == _AUTO_PORT:
+						log.info(f"Apollo detected on {port} at {baudRate} baud.")
+						# Persist the detected port so "Auto (detect)" can prefer it next time.
+						if port and port != self._lastDetectedPort:
+							self._lastDetectedPort = port
+							try:
+								import config  # type: ignore[import-not-found]
 
-			fallbackCandidate: Optional[tuple[str, int]] = None
+								speechSection = config.conf.get("speech") if hasattr(config, "conf") else None
+								if speechSection is not None:
+									driverSection = speechSection.get(self.name)
+									if driverSection is None:
+										speechSection[self.name] = {}
+										driverSection = speechSection.get(self.name)
+									if driverSection is not None:
+										driverSection["lastDetectedPort"] = port
+										try:
+											config.conf.save()
+										except Exception:
+											pass
+							except Exception:
+								pass
+					else:
+						log.info(f"Apollo connected on {port} at {baudRate} baud.")
+					return True
+
 			for port in getCandidatePorts():
+				if overallDeadline is not None and time.monotonic() > overallDeadline:
+					break
 				for baudRate in baudTryOrder:
+					if overallDeadline is not None and time.monotonic() > overallDeadline:
+						break
 					ser = openSerial(port, baudRate)
 					if ser is None:
 						continue
@@ -958,36 +1025,7 @@ class SynthDriver(BaseSynthDriver):
 							continue
 						finalBaud = switched
 						return finalizeConnection(port, finalBaud, ser)
-
-					# Keep a best-effort fallback connection in case indexing isn't supported.
-					# Prefer the most-likely baud rate (power-up default) to avoid garbled output if we
-					# can't validate indexing.
-					def fallbackPriority(rate: int) -> int:
-						if rate == _DEFAULT_BAUD_RATE:
-							return 0
-						if rate == desiredBaudRate:
-							return 1
-						return 2
-
-					if (
-						fallbackCandidate is None
-						or fallbackPriority(baudRate) < fallbackPriority(fallbackCandidate[1])
-					):
-						fallbackCandidate = (port, baudRate)
 					closeSerial(ser)
-
-			# Auto-detect: if nothing responded to the probe, fall back to the first port that at least opened.
-			if fallbackCandidate is not None:
-				port, baudRate = fallbackCandidate
-				ser = openSerial(port, baudRate)
-				if ser is not None:
-					self._initPort(ser)
-					with self._serialLock:
-						self._serial = ser
-					log.warning(
-						f"Apollo could not verify indexing; using {port}@{baudRate} in best-effort mode.",
-					)
-					return True
 
 			# Avoid log spam when some other NVDA component temporarily grabs the port.
 			now = time.monotonic()
@@ -1392,7 +1430,7 @@ class SynthDriver(BaseSynthDriver):
 	def _set_port(self, value: str) -> None:
 		value = (value or "").strip()
 		if not value:
-			value = _DEFAULT_PORT
+			value = _AUTO_PORT
 		if value == self._port:
 			return
 		self._port = value
@@ -2198,6 +2236,30 @@ class SynthDriver(BaseSynthDriver):
 		return None
 
 	def speak(self, speechSequence):
+		# Some applications call NVDA's speech API repeatedly without cancelling the previous utterance.
+		# Apollo has a sizeable internal speech buffer, so this would result in queued speech and poor
+		# responsiveness during fast navigation (e.g. pressing Down Arrow while a long message is still
+		# being spoken).
+		#
+		# To keep navigation responsive without breaking typed-character echo, automatically cancel
+		# ongoing/queued speech when a new non-trivial utterance arrives.
+		try:
+			speechSequence = tuple(speechSequence)
+		except Exception:
+			pass
+		else:
+			textChars = 0
+			for item in speechSequence:
+				if isinstance(item, str):
+					textChars += len(item)
+					if textChars > 1:
+						break
+			if textChars > 1:
+				with self._indexLock:
+					hasSpeech = self._isSpeaking or bool(self._pendingIndexes)
+				if hasSpeech or not self._writeQueue.empty():
+					self.cancel()
+
 		# Never block the UI thread on serial I/O. If we're disconnected, queue speech and
 		# let the background write thread establish the connection.
 		if self._getSerial() is None:
