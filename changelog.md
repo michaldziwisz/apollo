@@ -1,3 +1,7 @@
+## 0.1.87
+
+- Fix connection detection on some hardware by probing Apollo via indexing response (instead of `@V?`).
+
 ## 0.1.86
 
 - Force Apollo serial baud rate to 9600 for stability (no probing/operation at other rates).
