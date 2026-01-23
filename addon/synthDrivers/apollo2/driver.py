@@ -922,36 +922,38 @@ class SynthDriver(BaseSynthDriver):
 			) -> bool:  # type: ignore[misc]
 				# First, verify this is really Apollo by using a lightweight "@c?" query.
 				# This avoids relying on indexing support for basic device detection.
+				probeTimeout = 0.35 if overallDeadline is None else 0.25
 				if not probeSettingResponseDirect(
 					ser,
 					command=b"@V?",
 					expectedPrefix=b"V",
-					timeout=0.35,
+					timeout=probeTimeout,
 				):
 					return False
 
-				# Use "@I?" / "@I+" for indexing. See comment in __init__.
-				cmd = self._indexQueryCommand
-				# During the bounded startup/synth-switch probe we keep things fast: query first,
-				# and then attempt an enable+retry once.
-				if overallDeadline is not None:
+				def tryIndexingProbe(*, query: bytes, enable: bytes) -> bool:
 					writeAndFlush(ser, _MUTE)
-					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
+					if probeIndexResponseDirect(ser, command=query, timeout=probeTimeout):
+						self._indexQueryCommand = query
+						self._indexEnableCommand = enable
+						self._indexMarkCommand = enable
 						return True
-					writeAndFlush(ser, self._indexEnableCommand)
-					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
+					writeAndFlush(ser, enable)
+					if probeIndexResponseDirect(ser, command=query, timeout=probeTimeout):
+						self._indexQueryCommand = query
+						self._indexEnableCommand = enable
+						self._indexMarkCommand = enable
 						return True
 					return False
 
-					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
-						return True
-
-					# Enable indexing (requires a preceding mute on some firmware) and retry.
-					writeAndFlush(ser, _MUTE)
-					writeAndFlush(ser, self._indexEnableCommand)
-					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
-						return True
-					return False
+				# Use "@I?" / "@I+" for indexing by default (prevents stray "1" announcements on some firmware),
+				# but fall back to "@1?" / "@1+" if that is the variant supported by the device.
+				if tryIndexingProbe(query=self._indexQueryCommand, enable=self._indexEnableCommand):
+					return True
+				if tryIndexingProbe(query=b"@1?", enable=b"@1+ "):
+					log.info("Apollo: using @1?/@1+ indexing command variant.")
+					return True
+				return False
 
 			def trySwitchSynthBaudRate(ser: serial.Serial, *, port: str, currentBaud: int) -> Optional[int]:
 				if overallDeadline is not None and time.monotonic() > overallDeadline:
