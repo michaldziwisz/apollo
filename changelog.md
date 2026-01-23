@@ -1,3 +1,7 @@
+## 0.1.85
+
+- Fix a regression where a bad indent prevented baud-rate probing during connection detection (causing immediate “Apollo not detected” failures).
+
 ## 0.1.84
 
 - Fix probing on some firmware variants by adding required delimiters (trailing space) to `@V?` / `@I?` / `@1?` queries.
