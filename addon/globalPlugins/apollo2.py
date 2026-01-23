@@ -28,7 +28,8 @@ _SYNTH_NAME = "apollo2"
 _AUTO_PORT = "auto"
 _SUPPORTED_BAUD_RATES = (300, 1200, 9600, 19200, 28800, 57600)
 _NO_BRAILLE = "noBraille"
-_INDEX_QUERY_COMMAND = b"@I?"
+_PROBE_COMMAND = b"@V?"
+_PROBE_PREFIX = b"V"
 _NAK = b"\x15"
 
 
@@ -70,14 +71,14 @@ def _importSerial():
 		return None
 
 
-def _probeApolloIndexResponse(ser, *, timeout: float = 0.35) -> bool:
-	"""Best-effort probe that matches the driver's indexing query response shape."""
+def _probeApolloResponse(ser, *, timeout: float = 0.35) -> bool:
+	"""Best-effort probe that matches the driver's "@c?" response shape (e.g. @V? -> Vhh)."""
 	try:
 		ser.reset_input_buffer()
 	except Exception:
 		pass
 	try:
-		ser.write(_INDEX_QUERY_COMMAND)
+		ser.write(_PROBE_COMMAND)
 		try:
 			ser.flush()
 		except Exception:
@@ -92,18 +93,16 @@ def _probeApolloIndexResponse(ser, *, timeout: float = 0.35) -> bool:
 			return False
 		if not first or first == _NAK:
 			continue
-		if first != b"I":
+		if first != _PROBE_PREFIX:
 			continue
 		try:
-			rest = ser.read(3)
+			rest = ser.read(2)
 		except Exception:
 			return False
-		if len(rest) != 3:
+		if len(rest) != 2:
 			return False
 		hexDigits = b"0123456789abcdefABCDEF"
 		if rest[0:1] not in hexDigits or rest[1:2] not in hexDigits:
-			return False
-		if rest[2:3] not in (b"T", b"M", b"t", b"m"):
 			return False
 		return True
 	return False
@@ -139,7 +138,7 @@ def _testApolloConnection(*, port: str, baud: int) -> tuple[bool, Optional[str]]
 		except Exception:
 			continue
 		try:
-			if _probeApolloIndexResponse(ser, timeout=0.35):
+			if _probeApolloResponse(ser, timeout=0.35):
 				return True, candidate
 		finally:
 			try:

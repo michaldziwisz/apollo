@@ -122,6 +122,10 @@ class _WriteItem:
 	isMute: bool = False
 
 
+def _is_hex_digit_byte(b: bytes) -> bool:
+	return bool(b) and b[0] in b"0123456789abcdefABCDEF"
+
+
 @dataclass(frozen=True)
 class _RomSlotInfo:
 	slot: str
@@ -720,10 +724,20 @@ class SynthDriver(BaseSynthDriver):
 				if rate in _SUPPORTED_BAUD_RATES and rate not in baudTryOrder:
 					baudTryOrder.append(rate)
 
-			addBaud(desiredBaudRate)
-			addBaud(_DEFAULT_BAUD_RATE)
-			for rate in _SUPPORTED_BAUD_RATES:
-				addBaud(rate)
+				addBaud(desiredBaudRate)
+				addBaud(_DEFAULT_BAUD_RATE)
+				# Prefer higher, commonly-used baud rates early so the bounded startup check can still
+				# find the device even if the configured baud rate doesn't match the synth's current state.
+				# Low rates are kept for completeness but are tried last.
+				for rate in (57600, 28800, 19200, 1200, 300):
+					addBaud(rate)
+				for rate in _SUPPORTED_BAUD_RATES:
+					addBaud(rate)
+				# When NVDA is switching synthesizers we only have a short budget to detect the device.
+				# If the user is on a modern USB/serial setup (>= 9600), skip very low baud probing here
+				# so we can try all realistic rates within `_INITIAL_CONNECT_MAX_SECONDS`.
+				if overallDeadline is not None and desiredBaudRate >= 9600:
+					baudTryOrder = [rate for rate in baudTryOrder if rate >= 9600]
 
 			def getCandidatePorts() -> tuple[str, ...]:
 				requested = (self._port or "").strip() or _DEFAULT_PORT
@@ -860,18 +874,84 @@ class SynthDriver(BaseSynthDriver):
 					return True
 				return False
 
-			def ensureIndexingAndProbe(ser: serial.Serial) -> bool:  # type: ignore[misc]
-				# Use "@I?" / "@I+" for indexing. See comment in __init__.
-				cmd = self._indexQueryCommand
-				if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
-					return True
-
-				# Enable indexing (requires a preceding mute on some firmware) and retry.
-				writeAndFlush(ser, _MUTE)
-				writeAndFlush(ser, self._indexEnableCommand)
-				if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
+			def probeSettingResponseDirect(
+				ser: serial.Serial,
+				*,
+				command: bytes,
+				expectedPrefix: bytes,
+				timeout: float = 0.35,
+			) -> bool:  # type: ignore[misc]
+				"""Probe a 3-byte "@c?" response (e.g. @V? -> Vhh)."""
+				if overallDeadline is not None:
+					remaining = overallDeadline - time.monotonic()
+					if remaining <= 0:
+						return False
+					timeout = min(timeout, remaining)
+				try:
+					ser.reset_input_buffer()
+				except Exception:
+					pass
+				if not writeAndFlush(ser, command):
+					return False
+				deadline = time.monotonic() + timeout
+				while time.monotonic() < deadline and not self._stopEvent.is_set():
+					try:
+						first = ser.read(1)
+					except Exception:
+						return False
+					if not first or first == _NAK:
+						continue
+					if first != expectedPrefix:
+						continue
+					try:
+						rest = ser.read(2)
+					except Exception:
+						return False
+					if len(rest) != 2:
+						return False
+					if not _is_hex_digit_byte(rest[0:1]) or not _is_hex_digit_byte(rest[1:2]):
+						return False
 					return True
 				return False
+
+			def ensureIndexingAndProbe(
+				ser: serial.Serial,
+				*,
+				port: str,
+				baudRate: int,
+			) -> bool:  # type: ignore[misc]
+				# First, verify this is really Apollo by using a lightweight "@c?" query.
+				# This avoids relying on indexing support for basic device detection.
+				if not probeSettingResponseDirect(
+					ser,
+					command=b"@V?",
+					expectedPrefix=b"V",
+					timeout=0.35,
+				):
+					return False
+
+				# Use "@I?" / "@I+" for indexing. See comment in __init__.
+				cmd = self._indexQueryCommand
+				# During the bounded startup/synth-switch probe we keep things fast: query first,
+				# and then attempt an enable+retry once.
+				if overallDeadline is not None:
+					writeAndFlush(ser, _MUTE)
+					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
+						return True
+					writeAndFlush(ser, self._indexEnableCommand)
+					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
+						return True
+					return False
+
+					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
+						return True
+
+					# Enable indexing (requires a preceding mute on some firmware) and retry.
+					writeAndFlush(ser, _MUTE)
+					writeAndFlush(ser, self._indexEnableCommand)
+					if probeIndexResponseDirect(ser, command=cmd, timeout=0.35):
+						return True
+					return False
 
 			def trySwitchSynthBaudRate(ser: serial.Serial, *, port: str, currentBaud: int) -> Optional[int]:
 				if overallDeadline is not None and time.monotonic() > overallDeadline:
@@ -1054,7 +1134,7 @@ class SynthDriver(BaseSynthDriver):
 						ser = openSerial(port, baudRate)
 						if ser is None:
 							continue
-						if ensureIndexingAndProbe(ser):
+						if ensureIndexingAndProbe(ser, port=port, baudRate=baudRate):
 							finalBaud = baudRate
 							switched = trySwitchSynthBaudRate(ser, port=port, currentBaud=baudRate)
 							if switched is None:
@@ -1062,6 +1142,7 @@ class SynthDriver(BaseSynthDriver):
 								continue
 							finalBaud = switched
 							return finalizeConnection(port, finalBaud, ser)
+						connectReasons.append(f"{port}@{baudRate} probe failed")
 						closeSerial(ser)
 
 				# If the port was temporarily busy, wait a moment and retry within the allowed budget.
