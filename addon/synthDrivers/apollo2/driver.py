@@ -2536,10 +2536,13 @@ class SynthDriver(BaseSynthDriver):
 				if item is None or (item is not None and not item.cancelable and not item.isMute):
 					preserved.append(item)
 		except queue.Empty:
-			if ser is not None and (wasSpeaking or hadPendingQueue or inFlightSpeech):
-				# Ensure the mute reaches the synthesizer quickly even if the UI thread can't acquire the
-				# serial lock (e.g. while the write thread is mid-write). This write item clears the OS TX
-				# buffer and sends Control+X plus an indexing enable command.
+			if ser is not None:
+				# Always queue a mute when cancelling. Apollo's Control+X is documented to flush the
+				# speech buffer and stop speech immediately; relying purely on index state can miss
+				# small race windows during fast navigation.
+				#
+				# This write item clears the OS TX buffer and sends Control+X plus an indexing enable
+				# command to keep Say All / index polling working.
 				self._queueWrite(_MUTE + self._indexEnableCommand, cancelable=False, isMute=True)
 		for item in preserved:
 			self._writeQueue.put(item)
