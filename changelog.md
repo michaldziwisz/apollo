@@ -1,3 +1,7 @@
+## 0.1.92
+
+- Improve cancellation reliability (Control+X) during fast navigation by always sending a mute command on cancel.
+
 ## 0.1.91
 
 - Fix a regression where automatic cancellation of queued speech didn’t trigger, causing lag during fast navigation.
