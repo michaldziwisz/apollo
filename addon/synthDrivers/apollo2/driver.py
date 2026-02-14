@@ -55,6 +55,8 @@ except ImportError:
 
 _DEFAULT_PORT = "COM3"
 _AUTO_PORT = "auto"
+_AUTO_SETTING = "auto"
+_PRESERVE_SETTING = "preserve"
 _DEFAULT_BAUD_RATE = 9600
 # Apollo is most stable (and power-up defaults) at 9600 baud. We intentionally only support 9600
 # to avoid probing/operating at other rates which can cause false negatives and unstable behavior
@@ -99,6 +101,8 @@ _FORMANT_DELTA_UI_DEFAULT_MAX_ABS = 50
 # inconsistent (the spoken value could be rendered before the new setting took effect) and could
 # temporarily stall speech while the write thread waited for the debounce window.
 _FORMANT_SYNC_DEBOUNCE_SECONDS = 0.0
+_DELAYED_CHARACTER_DESCRIPTION_BREAK_MS = 1000
+_DRIVER_CONFIG_VERSION = 2
 
 _INTERNAL_DONE_INDEX = -1
 _NVDA_STARTUP_ANNOUNCE_WINDOW_SECONDS = 30.0
@@ -312,6 +316,13 @@ class SynthDriver(BaseSynthDriver):
 			defaultVal=False,
 		),
 		BooleanDriverSetting(
+			"ignoreDelayedCharacterDescriptionPause",
+			# Translators: Label for an advanced setting in the voice settings dialog.
+			_("Advanced: Ignore pause before character descriptions"),
+			availableInSettingsRing=False,
+			defaultVal=True,
+		),
+		BooleanDriverSetting(
 			"expandNumbers",
 			# Translators: Label for a setting in the voice settings dialog.
 			_("Expand &numbers to words"),
@@ -327,13 +338,13 @@ class SynthDriver(BaseSynthDriver):
 			"speakerTable",
 			# Translators: Label for a setting in the voice settings dialog.
 			_("Speaker &table"),
-			defaultVal="0",
+			defaultVal=_AUTO_SETTING,
 		),
 		DriverSetting(
 			"voiceFilter",
 			# Translators: Label for a setting in the voice settings dialog.
 			_("Voice source/&filter"),
-			defaultVal="0",
+			defaultVal=_AUTO_SETTING,
 		),
 		DriverSetting(
 			"rom",
@@ -406,6 +417,7 @@ class SynthDriver(BaseSynthDriver):
 		self._connectLock = threading.Lock()
 		self._connectThread: Optional[threading.Thread] = None
 		self._lastConnectErrorLogTime = 0.0
+		self._lastConnectFailureReason = ""
 		self._lastIndexResponseTime = 0.0
 		self._pendingApplyBaudRate = False
 		self._pendingApplyBaudRateTarget: Optional[int] = None
@@ -454,10 +466,11 @@ class SynthDriver(BaseSynthDriver):
 		self._spellMode = False
 		self._hypermode = False
 		self._phoneticMode = False
+		self._ignoreDelayedCharacterDescriptionPause = True
 		self._expandNumbers = False
 		self._markSpaceRatio = 0x16
-		self._speakerTable = "0"
-		self._voiceFilter = "0"
+		self._speakerTable = _AUTO_SETTING
+		self._voiceFilter = _AUTO_SETTING
 		self._formantDeltaUiRange = str(_FORMANT_DELTA_UI_DEFAULT_MAX_ABS)
 		self._formantDeltas = [0] * 10
 		self._formantDeltasApplied = [0] * 10
@@ -506,6 +519,33 @@ class SynthDriver(BaseSynthDriver):
 
 				speechSection = config.conf.get("speech") if hasattr(config, "conf") else None
 				driverSection = speechSection.get(self.name) if speechSection else None
+				# One-time config migrations.
+				if driverSection is not None:
+					try:
+						configVersionRaw = driverSection.get("driverConfigVersion", 0)
+						configVersion = int(configVersionRaw) if configVersionRaw is not None else 0
+					except Exception:
+						configVersion = 0
+
+					if configVersion < 2:
+						# Migration: older versions stored `voiceFilter = 0` (male default) by default.
+						# This effectively disables voice differentiation and makes preset voice selection
+						# feel like "3 voices that sound the same".
+						#
+						# If the user explicitly wants `voiceFilter=0`, they can re-select it after the upgrade.
+						if str(self._voiceFilter).strip() == "0":
+							log.info("Apollo: migrating legacy voiceFilter=0 to auto for better voice selection.")
+							self._voiceFilter = _AUTO_SETTING
+							try:
+								driverSection["voiceFilter"] = _AUTO_SETTING
+							except Exception:
+								pass
+
+						try:
+							driverSection["driverConfigVersion"] = str(_DRIVER_CONFIG_VERSION)
+						except Exception:
+							pass
+
 				cachedPort = driverSection.get("lastDetectedPort") if driverSection else None
 				if cachedPort:
 					self._lastDetectedPort = str(cachedPort)
@@ -520,9 +560,12 @@ class SynthDriver(BaseSynthDriver):
 		if not self._didInitialConnectCheck:
 			self._didInitialConnectCheck = True
 			if not self._ensureConnected(maxDuration=_INITIAL_CONNECT_MAX_SECONDS):
+				reason = (self._lastConnectFailureReason or "").strip()
+				diagnostic = f" Last error: {reason}" if reason else ""
 				raise RuntimeError(
-						f"Apollo not detected (port={self._port}, baud={self._baudRate}). "
-						"Check the serial port selection or use 'Auto (detect)'."
+						f"Apollo not detected (port={self._port}, baud={self._baudRate}).{diagnostic} "
+						"Tip: use NVDA+Shift+P to configure the serial port (without switching synth), "
+						"then NVDA+Shift+A to test and safely switch to Apollo."
 					)
 
 		# NVDA can call `loadSettings()` after some initial speech has already been queued during startup.
@@ -706,6 +749,8 @@ class SynthDriver(BaseSynthDriver):
 
 			connectReasons: list[str] = []
 			sawBusyPortError = False
+			portFallbackDueToMissing = False
+			missingRequestedPort: Optional[str] = None
 			desiredBaudRate = self._baudRate if self._baudRate in _SUPPORTED_BAUD_RATES else _DEFAULT_BAUD_RATE
 			baudTryOrder: list[int] = []
 
@@ -724,7 +769,22 @@ class SynthDriver(BaseSynthDriver):
 			def getCandidatePorts() -> tuple[str, ...]:
 				requested = (self._port or "").strip() or _DEFAULT_PORT
 				if requested != _AUTO_PORT:
-					return (requested,)
+					# If the configured port no longer exists (e.g. USB replug changed COM number),
+					# fall back to scanning ports so NVDA doesn't show a synthesizer-load error.
+					try:
+						try:
+							from serial.tools import list_ports  # type: ignore[import-not-found]
+						except ImportError:
+							from .cserial.tools import list_ports  # type: ignore[no-redef]
+						candidates = [p.device for p in list_ports.comports() if getattr(p, "device", None)]
+						if requested in candidates:
+							return (requested,)
+						nonlocal portFallbackDueToMissing
+						nonlocal missingRequestedPort
+						portFallbackDueToMissing = True
+						missingRequestedPort = requested
+					except Exception:
+						return (requested,)
 				try:
 					try:
 						from serial.tools import list_ports  # type: ignore[import-not-found]
@@ -1063,6 +1123,37 @@ class SynthDriver(BaseSynthDriver):
 				return None
 
 			def finalizeConnection(port: str, baudRate: int, ser: serial.Serial) -> bool:  # type: ignore[misc]
+				# If the user selected an explicit port but it has disappeared, switch to Auto (detect)
+				# and remember the detected port. This avoids persistent "Synthesizer error" after a
+				# USB serial adapter is replugged or Windows reassigns COM numbers.
+				if portFallbackDueToMissing and self._port != _AUTO_PORT:
+					originalPort = self._port
+					self._port = _AUTO_PORT
+					self._lastDetectedPort = port
+					log.warning(
+						"Apollo: configured port %s not present; switching to Auto (detect) with lastDetectedPort=%s",
+						originalPort,
+						port,
+					)
+					try:
+						import config  # type: ignore[import-not-found]
+
+						speechSection = config.conf.get("speech") if hasattr(config, "conf") else None
+						if speechSection is not None:
+							driverSection = speechSection.get(self.name)
+							if driverSection is None:
+								speechSection[self.name] = {}
+								driverSection = speechSection.get(self.name)
+							if driverSection is not None:
+								driverSection["port"] = _AUTO_PORT
+								driverSection["lastDetectedPort"] = port
+								try:
+									config.conf.save()
+								except Exception:
+									pass
+					except Exception:
+						pass
+
 				# Ensure the synth is in a known state before letting other threads write.
 				self._initPort(ser)
 				self._serialWriteTimeoutCount = 0
@@ -1142,6 +1233,7 @@ class SynthDriver(BaseSynthDriver):
 					log.error(f"Apollo connection failed (port={self._port}): {reason}")
 				else:
 					log.error(f"Apollo connection failed (port={self._port})")
+			self._lastConnectFailureReason = "; ".join(connectReasons[-10:])
 			return False
 
 	def _suspendPolling(self, seconds: float) -> None:
@@ -1514,12 +1606,15 @@ class SynthDriver(BaseSynthDriver):
 	def _getAvailableVoices(self):
 		voices = OrderedDict()
 		# Manual: voices 1-3 are male-based, 4-6 are non-male-based.
-		voices["1"] = VoiceInfo("1", _("Voice 1 (male)"))
-		voices["2"] = VoiceInfo("2", _("Voice 2 (male)"))
-		voices["3"] = VoiceInfo("3", _("Voice 3 (male)"))
-		voices["4"] = VoiceInfo("4", _("Voice 4 (non-male)"))
-		voices["5"] = VoiceInfo("5", _("Voice 5 (non-male)"))
-		voices["6"] = VoiceInfo("6", _("Voice 6 (non-male)"))
+		#
+		# In "auto" voice filter mode, we map each voice to a distinct voice source/filter (`@$o`)
+		# so the Voice selection yields clearly different timbres on ROMs where @V voices are similar.
+		voices["1"] = VoiceInfo("1", _("Voice 1 (male default)"))
+		voices["2"] = VoiceInfo("2", _("Voice 2 (male spike)"))
+		voices["3"] = VoiceInfo("3", _("Voice 3 (male reduced high-frequency filter)"))
+		voices["4"] = VoiceInfo("4", _("Voice 4 (female default)"))
+		voices["5"] = VoiceInfo("5", _("Voice 5 (female spike)"))
+		voices["6"] = VoiceInfo("6", _("Voice 6 (female reduced high-frequency filter)"))
 		return voices
 
 	def _get_availablePorts(self):
@@ -1736,6 +1831,12 @@ class SynthDriver(BaseSynthDriver):
 	def _set_expandNumbers(self, value: bool) -> None:
 		self._expandNumbers = bool(value)
 
+	def _get_ignoreDelayedCharacterDescriptionPause(self) -> bool:
+		return bool(self._ignoreDelayedCharacterDescriptionPause)
+
+	def _set_ignoreDelayedCharacterDescriptionPause(self, value: bool) -> None:
+		self._ignoreDelayedCharacterDescriptionPause = bool(value)
+
 	def _coerceChoiceValueToParam(
 		self,
 		value: object,
@@ -1811,6 +1912,7 @@ class SynthDriver(BaseSynthDriver):
 
 	def _get_availableSpeakertables(self):
 		tables: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
+		tables[_AUTO_SETTING] = StringParameterInfo(_AUTO_SETTING, _("Auto (match Voice)"))
 		tables["0"] = StringParameterInfo("0", _("Male"))
 		tables["1"] = StringParameterInfo("1", _("Non-male"))
 		current = self.speakerTable
@@ -1823,8 +1925,8 @@ class SynthDriver(BaseSynthDriver):
 
 	def _set_speakerTable(self, value: str) -> None:
 		value = (value or "").strip()
-		if value not in ("0", "1"):
-			value = "0"
+		if value not in (_AUTO_SETTING, "0", "1"):
+			value = _AUTO_SETTING
 		if value == self._speakerTable:
 			return
 		self._speakerTable = value
@@ -1838,6 +1940,11 @@ class SynthDriver(BaseSynthDriver):
 
 	def _get_availableVoicefilters(self):
 		filters: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
+		filters[_AUTO_SETTING] = StringParameterInfo(_AUTO_SETTING, _("Auto (match Voice)"))
+		filters[_PRESERVE_SETTING] = StringParameterInfo(
+			_PRESERVE_SETTING,
+			_("Preserve ROM defaults (do not override)"),
+		)
 		filters["0"] = StringParameterInfo("0", _("Male (default)"))
 		filters["1"] = StringParameterInfo("1", _("Female (default)"))
 		filters["2"] = StringParameterInfo("2", _("Male (spike)"))
@@ -1862,8 +1969,8 @@ class SynthDriver(BaseSynthDriver):
 
 	def _set_voiceFilter(self, value: str) -> None:
 		value = (value or "").strip()
-		if value not in ("0", "1", "2", "3", "4", "5", "6", "7"):
-			value = "0"
+		if value not in (_AUTO_SETTING, _PRESERVE_SETTING, "0", "1", "2", "3", "4", "5", "6", "7"):
+			value = _AUTO_SETTING
 		if value == self._voiceFilter:
 			return
 		self._voiceFilter = value
@@ -2031,18 +2138,66 @@ class SynthDriver(BaseSynthDriver):
 	def _getFormantDiffCommands(self, desired: Sequence[int], applied: Sequence[int]) -> list[str]:
 		return get_formant_diff_commands(desired, applied)
 
+	def _getEffectiveSpeakerTable(self) -> str:
+		if self._speakerTable in ("0", "1"):
+			return self._speakerTable
+		try:
+			voice = int(self._voice)
+		except Exception:
+			voice = 1
+		# Manual: voices 1-3 are male-based; 4-6 are non-male-based.
+		return "1" if voice >= 4 else "0"
+
+	def _getEffectiveVoiceFilter(self) -> str:
+		"""Return a voice filter value to apply, or an empty string.
+
+		- If the user explicitly selects a filter (0..7), always apply it.
+		- If set to "preserve", never apply `@$` (keeps ROM defaults / preset voice behaviour).
+		- If set to "auto", map NVDA Voice (1..6) to distinct `@$o` variants so voice switching
+		  yields audible differences on ROMs where @V voices are very similar.
+		"""
+		if self._voiceFilter in ("0", "1", "2", "3", "4", "5", "6", "7"):
+			return self._voiceFilter
+		if self._voiceFilter == _PRESERVE_SETTING:
+			return ""
+		try:
+			voice = int(self._voice)
+		except Exception:
+			voice = 1
+		# Prefer clearly distinct filters (default/spike/reduced-HF) for each speaker table.
+		mapping = {
+			1: "0",  # male default
+			2: "2",  # male spike
+			3: "6",  # male reduced high-frequency filter
+			4: "1",  # female default
+			5: "3",  # female spike
+			6: "7",  # female reduced high-frequency filter
+		}
+		return mapping.get(voice, "0")
+
 	def _settingsPrefix(self, *, rom: Optional[str] = None, formantCommands: Optional[list[str]] = None) -> bytes:
 		if formantCommands is None:
 			formantCommands = self._getFormantCommands()
 
+		speakerTable = self._getEffectiveSpeakerTable()
+		voiceFilter = self._getEffectiveVoiceFilter()
+
+		log.debug(
+			"Apollo settings sync: voice=%s speakerTable=%s voiceFilterSetting=%s voiceFilterApplied=%s",
+			self._voice,
+			speakerTable,
+			self._voiceFilter,
+			voiceFilter or "(none)",
+		)
+
 		commands: list[str] = []
-		# Some Apollo firmware variants reset the voice filter when selecting a preset voice (`@V`).
-		# Apply `@V` first, then override speaker table / filter.
+		commands.append(f"@V{self._voice} ")
+		commands.append(f"@K{speakerTable} ")
+		if voiceFilter:
+			commands.append(f"@${voiceFilter} ")
+
 		commands.extend(
 			(
-				f"@V{self._voice} ",
-				f"@K{self._speakerTable} ",
-				f"@${self._voiceFilter} ",
 				f"@P{1 if self._punctuation else 0} ",
 				f"@S{1 if self._spellMode else 0} ",
 				f"@H{1 if self._hypermode else 0} ",
@@ -2414,14 +2569,17 @@ class SynthDriver(BaseSynthDriver):
 		needSpaceBeforeNextText = False
 		synthSpellMode = self._spellMode
 		pendingPitchBytes: Optional[bytes] = None
+		utteranceHasContent = False
 
 		def flushText() -> None:
 			nonlocal pendingPitchBytes
+			nonlocal utteranceHasContent
 			if not textBufferParts:
 				return
 			text = "".join(textBufferParts)
 			textBufferParts.clear()
 			if text:
+				utteranceHasContent = True
 				if pendingPitchBytes is not None:
 					outputParts.append(pendingPitchBytes)
 					pendingPitchBytes = None
@@ -2496,6 +2654,21 @@ class SynthDriver(BaseSynthDriver):
 			elif isinstance(item, BreakCommand):
 				flushText()
 				if item.time and item.time > 0:
+					# NVDA can insert a 1-second delay before character descriptions (e.g. "i … Irena")
+					# using `BreakCommand(time=1000)` at the very start of an utterance.
+					#
+					# Some NVDA builds/configurations may not expose the toggle for this behaviour in
+					# the UI. For Apollo, rendering this break makes phonetic character descriptions
+					# feel sluggish compared to other synths.
+					#
+					# If enabled, skip long initial breaks so character descriptions are spoken
+					# immediately.
+					if (
+						self._ignoreDelayedCharacterDescriptionPause
+						and not utteranceHasContent
+						and item.time >= _DELAYED_CHARACTER_DESCRIPTION_BREAK_MS
+					):
+						continue
 					repeats = max(1, round(item.time / 100))
 					# Delimit repeated @Tx commands so they don't eat the following text/commands.
 					# Avoid literal spaces in spell/character mode (they may be spoken as "space").

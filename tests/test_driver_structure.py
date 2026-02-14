@@ -84,6 +84,101 @@ class DriverStructureTests(unittest.TestCase):
 			"_writeLoop never calls writeBytes outside the 'if ser is None' block; this breaks speech output.",
 		)
 
+	def test_speak_can_ignore_delayed_character_description_break(self) -> None:
+		repo_root = pathlib.Path(__file__).resolve().parents[1]
+		driver_path = repo_root / "addon" / "synthDrivers" / "apollo2" / "driver.py"
+		module = ast.parse(driver_path.read_text(encoding="utf-8"))
+
+		synth_class = None
+		for node in module.body:
+			if isinstance(node, ast.ClassDef) and node.name == "SynthDriver":
+				synth_class = node
+				break
+		self.assertIsNotNone(synth_class, "SynthDriver class not found in driver.py")
+
+		methods = [n for n in synth_class.body if isinstance(n, ast.FunctionDef)]
+		speak_method = next((m for m in methods if m.name == "speak"), None)
+		self.assertIsNotNone(speak_method, "speak method not found in SynthDriver")
+
+		def _contains_self_attr(node: ast.AST, attr_name: str) -> bool:
+			for n in ast.walk(node):
+				if isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id == "self":
+					if n.attr == attr_name:
+						return True
+			return False
+
+		def _contains_name(node: ast.AST, name: str) -> bool:
+			for n in ast.walk(node):
+				if isinstance(n, ast.Name) and n.id == name:
+					return True
+			return False
+
+		def _contains_continue(node: ast.AST) -> bool:
+			return any(isinstance(n, ast.Continue) for n in ast.walk(node))
+
+		found_guard = False
+		for n in ast.walk(speak_method):
+			if not isinstance(n, ast.If):
+				continue
+			if not _contains_continue(n):
+				continue
+			if not _contains_self_attr(n.test, "_ignoreDelayedCharacterDescriptionPause"):
+				continue
+			if not _contains_name(n.test, "_DELAYED_CHARACTER_DESCRIPTION_BREAK_MS"):
+				continue
+			found_guard = True
+			break
+
+		self.assertTrue(
+			found_guard,
+			"speak() does not include a guard to ignore NVDA's delayed character-description BreakCommand.",
+		)
+
+	def test_settings_prefix_does_not_force_voice_filter_unconditionally(self) -> None:
+		"""Ensure `@$` is not appended unconditionally in _settingsPrefix.
+
+		Some ROM/firmware combinations appear to treat `@$` as overriding preset voices. If it is
+		always sent (e.g. in "auto" mode), changing NVDA's Voice may have little to no audible effect.
+		"""
+		repo_root = pathlib.Path(__file__).resolve().parents[1]
+		driver_path = repo_root / "addon" / "synthDrivers" / "apollo2" / "driver.py"
+		module = ast.parse(driver_path.read_text(encoding="utf-8"))
+
+		synth_class = None
+		for node in module.body:
+			if isinstance(node, ast.ClassDef) and node.name == "SynthDriver":
+				synth_class = node
+				break
+		self.assertIsNotNone(synth_class, "SynthDriver class not found in driver.py")
+
+		methods = [n for n in synth_class.body if isinstance(n, ast.FunctionDef)]
+		settings_prefix = next((m for m in methods if m.name == "_settingsPrefix"), None)
+		self.assertIsNotNone(settings_prefix, "_settingsPrefix method not found in SynthDriver")
+
+		def _is_unconditional_at_dollar_append(stmt: ast.stmt) -> bool:
+			if not isinstance(stmt, ast.Expr):
+				return False
+			call = stmt.value
+			if not isinstance(call, ast.Call):
+				return False
+			func = call.func
+			if not (isinstance(func, ast.Attribute) and func.attr == "append"):
+				return False
+			if not (isinstance(func.value, ast.Name) and func.value.id == "commands"):
+				return False
+			if not call.args:
+				return False
+			for n in ast.walk(call.args[0]):
+				if isinstance(n, ast.Constant) and isinstance(n.value, str) and "@$" in n.value:
+					return True
+			return False
+
+		unconditional = [stmt for stmt in settings_prefix.body if _is_unconditional_at_dollar_append(stmt)]
+		self.assertFalse(
+			unconditional,
+			"_settingsPrefix appends '@$' unconditionally; it should be conditional on an explicit voiceFilter.",
+		)
+
 
 if __name__ == "__main__":
 	unittest.main()
