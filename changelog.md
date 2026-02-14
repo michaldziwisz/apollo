@@ -1,3 +1,45 @@
+## 0.1.102
+
+- Improve “Synthesizer error” diagnostics: include the last connection error (e.g. COM port missing / access denied) and point to NVDA+Shift+P (configure) / NVDA+Shift+A (test & switch).
+
+## 0.1.101
+
+- Fix “Synthesizer error” on NVDA startup when the configured COM port disappears (e.g. after USB replug / COM renumbering): fall back to auto-detect and update the stored port.
+
+## 0.1.100
+
+- Improve voice selection: `Voice source/filter = Auto (match Voice)` now maps NVDA voices to distinct Apollo `@$` filters (more audible differences vs the 3+3 grouping).
+- Add `Preserve ROM defaults (do not override)` option for users who don't want `@$` to be forced.
+
+## 0.1.99
+
+- Fix voice selection: when Voice source/filter is set to "auto", don't force Apollo `@$` (it can override preset voices on some ROMs).
+- Clarify voice labels in the Voice list.
+
+## 0.1.98
+
+- Fix voice differentiation: migrate legacy voiceFilter=0 configs to auto so voices can differ (more robust).
+
+## 0.1.97
+
+- Fix voice differentiation: migrate legacy `voiceFilter=0` configs to "auto" so voices can differ.
+
+## 0.1.96
+
+- Improve voice differentiation: when voice filter is set to "auto", map preset voices to distinct Apollo voice filters.
+
+## 0.1.95
+
+- Fix voice selection: when speaker table / voice filter are set to "auto", don't override Apollo’s preset voice tables/filters.
+
+## 0.1.94
+
+- Fix voice selection: add "auto" speaker table / voice filter options and migrate legacy defaults to "auto".
+
+## 0.1.93
+
+- Add an option to ignore NVDA’s delayed character-description pause for snappier phonetic feedback.
+
 ## 0.1.92
 
 - Improve cancellation reliability (Control+X) during fast navigation by always sending a mute command on cancel.
