@@ -27,7 +27,14 @@ class TextTests(unittest.TestCase):
 		# cp1250 "ą" (0xB9) is translated to Apollo encoding 0x86.
 		self.assertEqual(encode_text("ą", expand_numbers=False), bytes([0x86]))
 
+	def test_encode_text_fixes_isolated_digits_6_and_9(self) -> None:
+		self.assertEqual(encode_text("6", expand_numbers=False), encode_text("sześć", expand_numbers=False))
+		self.assertEqual(encode_text("9", expand_numbers=False), encode_text("dziewięć", expand_numbers=False))
+
+	def test_encode_text_does_not_fix_non_isolated_digits(self) -> None:
+		self.assertEqual(encode_text("66", expand_numbers=False), b"66")
+		self.assertIn(b"6", encode_text("Za 6 dni", expand_numbers=False))
+
 
 if __name__ == "__main__":
 	unittest.main()
-

@@ -1,6 +1,8 @@
 # -*- coding: UTF-8 -*-
 from __future__ import annotations
 
+import re
+
 from . import numbers_pl
 
 
@@ -52,6 +54,14 @@ POLISH_TO_APOLLO_TRANSLATION = bytes.maketrans(
 )
 
 
+_ISOLATED_DIGIT_FIXES_PL: dict[str, str] = {
+	"6": "sześć",
+	"9": "dziewięć",
+}
+
+_ISOLATED_DIGIT_PATTERN = re.compile(r"^\s*([69])\s*$")
+
+
 def sanitize_text(text: str) -> str:
 	if not text:
 		return ""
@@ -65,8 +75,17 @@ def sanitize_text(text: str) -> str:
 
 
 def encode_text(text: str, *, expand_numbers: bool = True) -> bytes:
+	# Workaround: some Apollo ROMs mispronounce isolated digits "6" and "9" (e.g. "szeszcz", "dziewęć").
+	# Only fix the digit-in-isolation case to avoid changing numbers in context (e.g. "66" or "Za 6 dni").
+	match = _ISOLATED_DIGIT_PATTERN.match(text)
+	if match:
+		digit = match.group(1)
+		replacement = _ISOLATED_DIGIT_FIXES_PL.get(digit)
+		if replacement:
+			start, end = match.span(1)
+			text = text[:start] + replacement + text[end:]
+
 	if expand_numbers and any("0" <= ch <= "9" for ch in text):
 		text = numbers_pl.dajNapisZLiczbamiWPostaciSlownej(text)
 	cp1250 = text.encode("cp1250", "replace")
 	return cp1250.translate(POLISH_TO_APOLLO_TRANSLATION)
-
