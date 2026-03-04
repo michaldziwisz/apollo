@@ -1,3 +1,7 @@
+## 0.1.103
+
+- Fix Polish pronunciation for isolated digits 6 and 9 (e.g. "szeszcz"/"dziewęć" → "sześć"/"dziewięć").
+
 ## 0.1.102
 
 - Improve “Synthesizer error” diagnostics: include the last connection error (e.g. COM port missing / access denied) and point to NVDA+Shift+P (configure) / NVDA+Shift+A (test & switch).
