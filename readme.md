@@ -72,6 +72,5 @@ If your Apollo is connected via a COM port and you don't use a braille display, 
 display to “No braille” (and disabling braille auto-detection). Otherwise, NVDA may repeatedly probe COM ports via
 braille display drivers, which can lead to `PermissionError` spam in `nvda.log` and occasional responsiveness issues.
 
-The add-on also provides:
-
-- `NVDA+Shift+B`: disable braille auto-detection (switch braille display to “No braille”).
+The add-on also provides an unassigned input gesture action to disable braille auto-detection
+(switch braille display to “No braille”). Assign it from NVDA’s Input Gestures dialog if you need it.

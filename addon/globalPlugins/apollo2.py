@@ -14,6 +14,7 @@ try:
 	import wx  # type: ignore[import-not-found]
 	import globalPluginHandler  # type: ignore[import-not-found]
 	import synthDriverHandler  # type: ignore[import-not-found]
+	from scriptHandler import script  # type: ignore[import-not-found]
 except ImportError:
 	# Not running under NVDA.
 	config = None  # type: ignore[assignment]
@@ -22,6 +23,12 @@ except ImportError:
 	wx = None  # type: ignore[assignment]
 	globalPluginHandler = object  # type: ignore[assignment]
 	synthDriverHandler = None  # type: ignore[assignment]
+
+	def script(*args, **kwargs):  # type: ignore[no-redef]
+		def decorator(func):
+			return func
+
+		return decorator
 
 
 _SYNTH_NAME = "apollo2"
@@ -404,6 +411,10 @@ if wx is not None and gui is not None and config is not None:
 		def _onMenu(self, evt):
 			self.script_configureSerial(None)
 
+		@script(
+			description=_("Disable braille auto-detection (set display to No braille)"),
+			category=_("Apollo 2"),
+		)
 		def script_disableBrailleAutoDetect(self, gesture):
 			if _setNoBraille():
 				try:
@@ -416,6 +427,11 @@ if wx is not None and gui is not None and config is not None:
 				except Exception:
 					pass
 
+		@script(
+			description=_("Configure Apollo 2 serial connection"),
+			category=_("Apollo 2"),
+			gesture="kb:NVDA+shift+p",
+		)
 		def script_configureSerial(self, gesture):
 			parent = getattr(gui, "mainFrame", None)
 			dlg = _SerialConfigDialog(parent)
@@ -443,6 +459,11 @@ if wx is not None and gui is not None and config is not None:
 			if disableBrailleAutoDetect:
 				self.script_disableBrailleAutoDetect(None)
 
+		@script(
+			description=_("Test Apollo 2 connection and switch synthesizer"),
+			category=_("Apollo 2"),
+			gesture="kb:NVDA+shift+a",
+		)
 		def script_switchToApollo2(self, gesture):
 			if synthDriverHandler is None:
 				return
@@ -465,12 +486,6 @@ if wx is not None and gui is not None and config is not None:
 					ui.message(_("Failed to switch synthesizer to Apollo 2."))
 				except Exception:
 					pass
-
-		__gestures = {
-			"kb:NVDA+shift+p": "configureSerial",
-			"kb:NVDA+shift+b": "disableBrailleAutoDetect",
-			"kb:NVDA+shift+a": "switchToApollo2",
-		}
 
 else:
 

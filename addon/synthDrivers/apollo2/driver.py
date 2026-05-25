@@ -2527,6 +2527,17 @@ class SynthDriver(BaseSynthDriver):
 				return slot
 		return None
 
+	def _shouldApplyPolishDigitFixes(self) -> bool:
+		with self._romInfoLock:
+			info = self._romInfoBySlot.get(str(self._rom))
+			hasInfo = bool(self._romInfoBySlot)
+		if info is None:
+			if not hasInfo:
+				self._queueRomInfoRequestIfNeeded()
+			return False
+		lang = _normalizeNvdaLang(info.nvdaLanguage or "")
+		return lang.split("_")[0] == "pl" if lang else False
+
 	def speak(self, speechSequence):
 		# Some applications call NVDA's speech API repeatedly without cancelling the previous utterance.
 		# Apollo has a sizeable internal speech buffer, so this would result in queued speech and poor
@@ -2570,6 +2581,7 @@ class SynthDriver(BaseSynthDriver):
 		synthSpellMode = self._spellMode
 		pendingPitchBytes: Optional[bytes] = None
 		utteranceHasContent = False
+		applyPolishDigitFixes = self._shouldApplyPolishDigitFixes()
 
 		def flushText() -> None:
 			nonlocal pendingPitchBytes
@@ -2587,6 +2599,7 @@ class SynthDriver(BaseSynthDriver):
 					encode_text(
 						text,
 						expand_numbers=self._expandNumbers and not (synthSpellMode or charModeActive),
+						apply_polish_digit_fixes=applyPolishDigitFixes,
 					),
 				)
 
