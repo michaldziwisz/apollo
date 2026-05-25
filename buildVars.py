@@ -20,17 +20,17 @@ addon_info = AddonInfo(
 	addon_description=_(
 		"Adds support for Dolphin Apollo 2 / PC 2 Card / Juno serial speech synthesizers."
 	),
-	addon_version="0.1.103",
+	addon_version="0.1.104",
 	# Translators: What's new content for the add-on version to be shown in the add-on store.
 	addon_changelog=_(
-		"Fix Polish number pronunciation for isolated digits 6 and 9 (\"sześć\", \"dziewięć\")."
+		"Remove the default NVDA+Shift+B gesture and limit Polish digit pronunciation fixes to Polish Apollo ROMs."
 	),
 	addon_author="PomPa <Kontakt@napompuj.SE>",
 	addon_url="https://github.com/michaldziwisz/apollo",
 	addon_sourceURL="https://github.com/michaldziwisz/apollo",
 	addon_docFileName="readme.html",
 	addon_minimumNVDAVersion="2024.1.0",
-	addon_lastTestedNVDAVersion="2025.3.2",
+	addon_lastTestedNVDAVersion="2026.4.0",
 	addon_updateChannel=None,
 	addon_license="GPL-2.0-or-later",
 	addon_licenseURL="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html",

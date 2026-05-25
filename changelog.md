@@ -1,3 +1,9 @@
+## 0.1.104
+
+- Remove the default `NVDA+Shift+B` gesture for disabling braille auto-detection; the action remains available in Input Gestures for manual assignment.
+- Limit the isolated `6` / `9` Polish pronunciation workaround to Apollo ROMs detected as Polish.
+- Update add-on compatibility metadata to NVDA 2026.4.0.
+
 ## 0.1.103
 
 - Fix Polish pronunciation for isolated digits 6 and 9 (e.g. "szeszcz"/"dziewęć" → "sześć"/"dziewięć").
