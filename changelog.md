@@ -1,3 +1,8 @@
+## 0.1.106
+
+- Make device detection consistent between the synthesizer driver and the "test connection" command: both now try the lightweight `@V?` query first and fall back to the indexing query, so the connection test can no longer disagree with what the driver actually connects to.
+- Auto-detection no longer gives up on a COM port that stays silent on `@V?`: the original indexing handshake is retried on that port, so ROMs that only answer the indexing query keep being detected.
+
 ## 0.1.105
 
 - Keep NVDA responsive when the serial-port list is requested: COM port enumeration now runs off the main thread with a short timeout, a brief result cache and a Windows registry fallback (an unhealthy USB serial driver could stall NVDA for seconds).
