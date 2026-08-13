@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import queue
+import re
 import threading
 import time
 from collections import OrderedDict, deque
@@ -65,7 +66,7 @@ _SUPPORTED_BAUD_RATES = (9600,)
 # How long we wait for a valid indexing probe when NVDA switches to this synth.
 # If the configured port is wrong (or the device is missing), failing fast prevents NVDA
 # from going silent and lets it keep using the previously selected synthesizer.
-_INITIAL_CONNECT_MAX_SECONDS = 2.0
+_INITIAL_CONNECT_MAX_SECONDS = 4.0
 _BAUD_RATE_TO_APOLLO_SELECTOR: dict[int, str] = {9600: "3"}
 _INDEX_POLL_INTERVAL_SECONDS = 0.10
 _ROM_INFO_REQUEST_MIN_INTERVAL_SECONDS = 5.0
@@ -78,6 +79,136 @@ _WRITE_CHUNK_SIZE = 64
 _OFFLINE_WRITE_MAX_AGE_SECONDS = 10.0
 _OFFLINE_WRITE_RETRY_INTERVAL_SECONDS = 0.25
 _SETTINGS_SYNC_DEBOUNCE_SECONDS = 0.05
+
+
+# Serial-port enumeration can block for seconds on Windows when a device/driver is unhealthy.
+# Keep it off NVDA's main thread and reuse a recent or still-running enumeration so repeated
+# settings/synth operations don't start a pile of SetupAPI scans.
+_PORT_ENUMERATION_TIMEOUT_SECONDS = 0.30
+_PORT_ENUMERATION_CACHE_SECONDS = 5.0
+_portEnumerationStateLock = threading.Lock()
+_portEnumerationDone: Optional[threading.Event] = None
+_portEnumerationResult: tuple[tuple[str, str], ...] = ()
+_portEnumerationError: Optional[str] = None
+_portEnumerationCompletedAt = 0.0
+
+
+def _enumerateWindowsSerialPortsRegistry() -> tuple[tuple[str, str], ...]:
+	"""Best-effort fast Windows fallback when pySerial/SetupAPI enumeration stalls."""
+	try:
+		import winreg  # type: ignore[import-not-found]
+	except ImportError:
+		return ()
+	devices: list[tuple[str, str]] = []
+	try:
+		with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DEVICEMAP\SERIALCOMM") as key:
+			index = 0
+			while True:
+				try:
+					_name, value, _valueType = winreg.EnumValue(key, index)
+				except OSError:
+					break
+				index += 1
+				if isinstance(value, str) and value.strip():
+					devices.append((value.strip(), ""))
+	except OSError:
+		return ()
+	seen: set[str] = set()
+	result: list[tuple[str, str]] = []
+	for device, description in devices:
+		key = device.casefold()
+		if key in seen:
+			continue
+		seen.add(key)
+		result.append((device, description))
+	return tuple(result)
+
+
+def _enumerateSerialPortsBounded(
+	*, timeout: float = _PORT_ENUMERATION_TIMEOUT_SECONDS
+) -> tuple[Optional[tuple[tuple[str, str], ...]], str]:
+	"""Enumerate serial ports without allowing SetupAPI to freeze NVDA's main thread.
+
+	Returns ``(entries, source)``. ``entries`` is ``None`` only when both pySerial enumeration
+	and the Windows registry fallback are unavailable. A timed-out worker is reused by later
+	calls until it finishes, rather than starting another concurrent enumeration.
+	"""
+	global _portEnumerationDone
+	global _portEnumerationResult
+	global _portEnumerationError
+	global _portEnumerationCompletedAt
+
+	now = time.monotonic()
+	startWorker = False
+	with _portEnumerationStateLock:
+		done = _portEnumerationDone
+		if (
+			done is not None
+			and done.is_set()
+			and _portEnumerationCompletedAt > 0
+			and now - _portEnumerationCompletedAt <= _PORT_ENUMERATION_CACHE_SECONDS
+		):
+			if _portEnumerationError is None:
+				return _portEnumerationResult, "cache"
+			# A recent failed enumeration can still use the registry fallback below.
+			done = None
+		if done is None or done.is_set():
+			done = threading.Event()
+			_portEnumerationDone = done
+			_portEnumerationResult = ()
+			_portEnumerationError = None
+			_portEnumerationCompletedAt = 0.0
+			startWorker = True
+
+	if startWorker:
+		doneForWorker = done
+
+		def worker() -> None:
+			global _portEnumerationResult
+			global _portEnumerationError
+			global _portEnumerationCompletedAt
+			try:
+				try:
+					from serial.tools import list_ports  # type: ignore[import-not-found]
+				except ImportError:
+					from .cserial.tools import list_ports  # type: ignore[no-redef]
+				entries: list[tuple[str, str]] = []
+				for portInfo in list_ports.comports():
+					device = (getattr(portInfo, "device", "") or "").strip()
+					if not device:
+						continue
+					description = (getattr(portInfo, "description", "") or "").strip()
+					entries.append((device, description))
+				error: Optional[str] = None
+			except Exception as e:
+				entries = []
+				error = f"{type(e).__name__}: {e}"
+			with _portEnumerationStateLock:
+				if _portEnumerationDone is doneForWorker:
+					_portEnumerationResult = tuple(entries)
+					_portEnumerationError = error
+					_portEnumerationCompletedAt = time.monotonic()
+			doneForWorker.set()
+
+		threading.Thread(target=worker, name="apolloPortEnumeration", daemon=True).start()
+
+	if done.wait(max(0.01, timeout)):
+		with _portEnumerationStateLock:
+			result = _portEnumerationResult
+			error = _portEnumerationError
+		if error is None:
+			return result, "pyserial"
+		registryResult = _enumerateWindowsSerialPortsRegistry()
+		if registryResult:
+			return registryResult, "registry-after-error"
+		return None, f"error: {error}"
+
+	# The worker may still complete later and its result will be reused on the next call.
+	# Registry lookup avoids losing auto-detection on Windows while keeping the main thread responsive.
+	registryResult = _enumerateWindowsSerialPortsRegistry()
+	if registryResult:
+		return registryResult, "registry-after-timeout"
+	return None, "timeout"
 _CONNECT_BACKOFF_ON_WRITE_TIMEOUT_SECONDS = 2.0
 
 _MIN_RATE = 1
@@ -768,31 +899,49 @@ class SynthDriver(BaseSynthDriver):
 
 			def getCandidatePorts() -> tuple[str, ...]:
 				requested = (self._port or "").strip() or _DEFAULT_PORT
+				enumStarted = time.monotonic()
+				log.info(
+					f"Apollo serial-port enumeration starting; main-thread wait limited to "
+					f"{_PORT_ENUMERATION_TIMEOUT_SECONDS:.2f}s"
+				)
+				portEntries, enumerationSource = _enumerateSerialPortsBounded()
+				enumElapsed = time.monotonic() - enumStarted
+				if portEntries is None:
+					log.warning(
+						f"Apollo serial-port enumeration unavailable after {enumElapsed:.3f}s "
+						f"(source={enumerationSource})"
+					)
+					# Preserve the original explicit-port behavior if enumeration is unavailable.
+					# For Auto, a cached successful port is still worth trying without enumeration.
+					cached = (self._lastDetectedPort or "").strip()
+					if requested != _AUTO_PORT:
+						return (requested,)
+					fallback = [cached] if cached else []
+					if _DEFAULT_PORT not in fallback:
+						fallback.append(_DEFAULT_PORT)
+					return tuple(fallback)
+
+				log.info(
+					f"Apollo serial-port enumeration completed in {enumElapsed:.3f}s "
+					f"via {enumerationSource}; {len(portEntries)} port(s)"
+				)
+				candidates = [device for device, _description in portEntries if device]
 				if requested != _AUTO_PORT:
 					# If the configured port no longer exists (e.g. USB replug changed COM number),
-					# fall back to scanning ports so NVDA doesn't show a synthesizer-load error.
-					try:
-						try:
-							from serial.tools import list_ports  # type: ignore[import-not-found]
-						except ImportError:
-							from .cserial.tools import list_ports  # type: ignore[no-redef]
-						candidates = [p.device for p in list_ports.comports() if getattr(p, "device", None)]
-						if requested in candidates:
-							return (requested,)
-						nonlocal portFallbackDueToMissing
-						nonlocal missingRequestedPort
-						portFallbackDueToMissing = True
-						missingRequestedPort = requested
-					except Exception:
+					# fall back to scanning the single enumeration result collected above.
+					if requested in candidates:
 						return (requested,)
-				try:
-					try:
-						from serial.tools import list_ports  # type: ignore[import-not-found]
-					except ImportError:
-						from .cserial.tools import list_ports  # type: ignore[no-redef]
-					candidates = [p.device for p in list_ports.comports() if getattr(p, "device", None)]
-				except Exception:
-					candidates = []
+					nonlocal portFallbackDueToMissing
+					nonlocal missingRequestedPort
+					portFallbackDueToMissing = True
+					missingRequestedPort = requested
+
+				# Keep COM ports in numeric order so COM9 is considered before COM10.
+				def _portSortKey(portName: str) -> tuple[int, str]:
+					match = re.fullmatch(r"COM(\d+)", (portName or "").strip(), re.IGNORECASE)
+					return (int(match.group(1)), "") if match else (10**9, (portName or "").lower())
+
+				candidates.sort(key=_portSortKey)
 				# Prefer the last successfully detected port (if any) to avoid scanning.
 				cached = (self._lastDetectedPort or "").strip()
 				if cached and cached in candidates:
@@ -861,6 +1010,39 @@ class SynthDriver(BaseSynthDriver):
 					ser.close()
 				except Exception:
 					log.debugWarning("Failed to close Apollo serial port during connect", exc_info=True)
+
+			def openSerialBounded(
+				port: str,
+				baudRate: int,
+				*,
+				timeout: float,
+			) -> Optional[serial.Serial]:  # type: ignore[misc]
+				"""Open a COM port without allowing a broken Windows serial device to stall detection."""
+				state: dict[str, object] = {"abandoned": False, "serial": None}
+				stateLock = threading.Lock()
+				done = threading.Event()
+
+				def worker() -> None:
+					ser = openSerial(port, baudRate)
+					with stateLock:
+						if state["abandoned"]:
+							lateSerial = ser
+						else:
+							state["serial"] = ser
+							lateSerial = None
+					if lateSerial is not None:
+						closeSerial(lateSerial)
+					done.set()
+
+				threading.Thread(target=worker, name="apolloAutoOpen", daemon=True).start()
+				if done.wait(max(0.01, timeout)):
+					with stateLock:
+						return state["serial"]  # type: ignore[return-value]
+				with stateLock:
+					state["abandoned"] = True
+				connectReasons.append(f"{port}@{baudRate} open timed out after {timeout:.3f}s")
+				log.info(f"Apollo auto-detect skipping {port}@{baudRate}: open exceeded {timeout:.3f}s")
+				return None
 
 			def writeAndFlush(ser: serial.Serial, data: bytes) -> bool:  # type: ignore[misc]
 				with self._serialIoLock:
@@ -1192,37 +1374,106 @@ class SynthDriver(BaseSynthDriver):
 						log.info(f"Apollo connected on {port} at {baudRate} baud.")
 					return True
 
-			while True:
-				sawBusyPortError = False
-				for port in getCandidatePorts():
-					if overallDeadline is not None and time.monotonic() > overallDeadline:
-						break
+			candidatePorts = getCandidatePorts()
+			useAutoScan = self._port == _AUTO_PORT or portFallbackDueToMissing or len(candidatePorts) > 1
+
+			if not useAutoScan:
+				# Preserve the original behavior for an explicitly selected, existing COM port.
+				for port in candidatePorts:
 					for baudRate in baudTryOrder:
-						if overallDeadline is not None and time.monotonic() > overallDeadline:
-							break
 						ser = openSerial(port, baudRate)
 						if ser is None:
 							continue
 						if ensureIndexingAndProbe(ser, port=port, baudRate=baudRate):
-							finalBaud = baudRate
 							switched = trySwitchSynthBaudRate(ser, port=port, currentBaud=baudRate)
-							if switched is None:
-								closeSerial(ser)
-								continue
-							finalBaud = switched
-							return finalizeConnection(port, finalBaud, ser)
+							if switched is not None:
+								return finalizeConnection(port, switched, ser)
 						connectReasons.append(f"{port}@{baudRate} probe failed")
 						closeSerial(ser)
+			else:
+				# Detect the Apollo with a harmless setting query, not an indexing command.
+				# @V? replies as Vhh and does not enable or select an indexing protocol.
+				retained: list[tuple[str, int, serial.Serial]] = []  # type: ignore[misc]
 
-				# If the port was temporarily busy, wait a moment and retry within the allowed budget.
-				if overallDeadline is None:
-					break
-				remaining = overallDeadline - time.monotonic()
-				if remaining <= 0:
-					break
-				if not sawBusyPortError:
-					break
-				time.sleep(min(0.1, remaining))
+				def finishDetected(port: str, baudRate: int, ser: serial.Serial) -> bool:  # type: ignore[misc]
+					nonlocal retained
+					for _retainedPort, _retainedBaud, retainedSer in retained:
+						if retainedSer is not ser:
+							closeSerial(retainedSer)
+					# Do not leave closed handles in the deep-pass list.
+					retained = [item for item in retained if item[2] is ser]
+					# Give the device a brief quiet interval after the setting reply, then use the
+					# driver's original indexing handshake on the one confirmed Apollo port.
+					time.sleep(0.08)
+					if not ensureIndexingAndProbe(ser, port=port, baudRate=baudRate):
+						connectReasons.append(f"{port}@{baudRate} identified by @V? but indexing handshake failed")
+						closeSerial(ser)
+						return False
+					switched = trySwitchSynthBaudRate(ser, port=port, currentBaud=baudRate)
+					if switched is None:
+						closeSerial(ser)
+						return False
+					return finalizeConnection(port, switched, ser)
+
+				# If a previous Auto scan found Apollo, give that port a complete fast+deep
+				# @V? attempt before touching unrelated COM ports. If Windows has reassigned
+				# the adapter, this simply fails and the normal scan below finds the new port.
+				priorityPort = (self._lastDetectedPort or "").strip()
+				if priorityPort not in candidatePorts:
+					priorityPort = ""
+				if priorityPort:
+					for baudRate in baudTryOrder[:1]:
+						if overallDeadline is not None and time.monotonic() >= overallDeadline:
+							break
+						log.info(f"Apollo auto-detect priority fast probing {priorityPort}@{baudRate} with @V?")
+						ser = openSerialBounded(priorityPort, baudRate, timeout=0.15)
+						if ser is None:
+							continue
+						time.sleep(0.03)
+						if probeSettingResponseDirect(ser, command=b"@V?", expectedPrefix=b"V", timeout=0.18):
+							log.info(f"Apollo auto-detect identified {priorityPort}@{baudRate} via priority @V?")
+							if finishDetected(priorityPort, baudRate, ser):
+								return True
+						else:
+							log.info(f"Apollo auto-detect priority deep probing retained {priorityPort}@{baudRate} with @V?")
+							if probeSettingResponseDirect(ser, command=b"@V?", expectedPrefix=b"V", timeout=0.40):
+								log.info(f"Apollo auto-detect identified {priorityPort}@{baudRate} via priority deep @V?")
+								if finishDetected(priorityPort, baudRate, ser):
+									return True
+						closeSerial(ser)
+
+				# Fast pass: short @V? query on the remaining available COM ports.
+				for port in candidatePorts:
+					if port == priorityPort:
+						continue
+					if overallDeadline is not None and time.monotonic() >= overallDeadline:
+						break
+					for baudRate in baudTryOrder[:1]:
+						log.info(f"Apollo auto-detect fast probing {port}@{baudRate} with @V?")
+						ser = openSerialBounded(port, baudRate, timeout=0.15)
+						if ser is None:
+							continue
+						time.sleep(0.03)
+						if probeSettingResponseDirect(ser, command=b"@V?", expectedPrefix=b"V", timeout=0.18):
+							log.info(f"Apollo auto-detect identified {port}@{baudRate} via @V?")
+							if finishDetected(port, baudRate, ser):
+								return True
+							retained = [item for item in retained if item[2] is not ser]
+							continue
+						retained.append((port, baudRate, ser))
+
+				# Deep pass: retry @V? on ports that opened successfully, without reopening them.
+				for port, baudRate, ser in list(retained):
+					if overallDeadline is not None and time.monotonic() >= overallDeadline:
+						break
+					log.info(f"Apollo auto-detect deep probing retained {port}@{baudRate} with @V?")
+					if probeSettingResponseDirect(ser, command=b"@V?", expectedPrefix=b"V", timeout=0.40):
+						log.info(f"Apollo auto-detect identified {port}@{baudRate} via deep @V?")
+						if finishDetected(port, baudRate, ser):
+							return True
+						retained = [item for item in retained if item[2] is not ser]
+				for _port, _baudRate, ser in retained:
+					closeSerial(ser)
 
 			# Avoid log spam when some other NVDA component temporarily grabs the port.
 			now = time.monotonic()
@@ -1620,18 +1871,25 @@ class SynthDriver(BaseSynthDriver):
 	def _get_availablePorts(self):
 		ports: "OrderedDict[str, StringParameterInfo]" = OrderedDict()
 		ports[_AUTO_PORT] = StringParameterInfo(_AUTO_PORT, _("Auto (detect)"))
-		try:
-			try:
-				from serial.tools import list_ports  # type: ignore[import-not-found]
-			except ImportError:
-				from .cserial.tools import list_ports  # type: ignore[no-redef]
-
-			for portInfo in list_ports.comports():
-				device = portInfo.device
-				description = getattr(portInfo, "description", "") or ""
+		started = time.monotonic()
+		portEntries, enumerationSource = _enumerateSerialPortsBounded()
+		elapsed = time.monotonic() - started
+		if portEntries is not None:
+			log.debug(
+				f"Apollo settings port list obtained in {elapsed:.3f}s via {enumerationSource}; "
+				f"{len(portEntries)} port(s)"
+			)
+			for device, description in portEntries:
 				displayName = f"{device} - {description}" if description else device
 				ports[device] = StringParameterInfo(device, displayName)
-		except Exception:
+		else:
+			log.warning(
+				f"Apollo settings port enumeration unavailable after {elapsed:.3f}s "
+				f"(source={enumerationSource}); using known ports only"
+			)
+			cached = (self._lastDetectedPort or "").strip()
+			if cached:
+				ports[cached] = StringParameterInfo(cached, cached)
 			ports[_DEFAULT_PORT] = StringParameterInfo(_DEFAULT_PORT, _DEFAULT_PORT)
 
 		current = self.port
