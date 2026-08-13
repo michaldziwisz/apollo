@@ -1,3 +1,12 @@
+## 0.1.105
+
+- Keep NVDA responsive when the serial-port list is requested: COM port enumeration now runs off the main thread with a short timeout, a brief result cache and a Windows registry fallback (an unhealthy USB serial driver could stall NVDA for seconds).
+- Speed up auto-detection: bound the time spent opening each candidate COM port, identify the Apollo with a lightweight `@V?` query and run the indexing handshake only on the confirmed port.
+- Try COM ports in numeric order, so `COM9` is checked before `COM10`.
+- Allow a little more time for the initial connection check (2 to 4 seconds) to reduce spurious "Synthesizer error" messages on startup.
+
+Thanks to Gracjan Nawrocki for these improvements.
+
 ## 0.1.104
 
 - Remove the default `NVDA+Shift+B` gesture for disabling braille auto-detection; the action remains available in Input Gestures for manual assignment.
