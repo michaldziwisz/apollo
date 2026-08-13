@@ -39,6 +39,12 @@ _SUPPORTED_BAUD_RATES = (9600,)
 _NO_BRAILLE = "noBraille"
 _INDEX_QUERY_COMMANDS = (b"@I?", b"@1?")
 _INDEX_RESPONSE_PREFIX = b"I"
+# Lightweight setting query used by the synth driver's auto-detection ("@V?" -> "Vhh").
+# Keeping both probes here means this connection test agrees with the driver on every device:
+# ROMs that answer "@V?" are recognised as fast as the driver does, and ROMs that only answer
+# the indexing query are still recognised.
+_SETTING_QUERY_COMMAND = b"@V?"
+_SETTING_RESPONSE_PREFIX = b"V"
 _MUTE = b"\x18"
 _NAK = b"\x15"
 
@@ -110,6 +116,49 @@ def _configureSerialForApollo(ser) -> None:
 		ser.reset_output_buffer()
 	except Exception:
 		pass
+
+
+def _probeApolloSettingResponse(ser, *, timeout: float = 0.35) -> bool:
+	"""Best-effort probe matching the driver's setting-query response shape ("@V?" -> "Vhh").
+
+	This is the same harmless query the synth driver uses to identify the device during
+	auto-detection, so the connection test cannot disagree with the driver about what is
+	an Apollo. Unlike the indexing probe it does not enable or select an indexing protocol.
+	"""
+	try:
+		ser.reset_input_buffer()
+	except Exception:
+		pass
+	try:
+		# Include a delimiter (space) after the query; some firmware variants require it.
+		ser.write(_SETTING_QUERY_COMMAND + b" ")
+		try:
+			ser.flush()
+		except Exception:
+			pass
+	except Exception:
+		return False
+	deadline = time.monotonic() + max(0.05, float(timeout))
+	hexDigits = b"0123456789abcdefABCDEF"
+	while time.monotonic() < deadline:
+		try:
+			first = ser.read(1)
+		except Exception:
+			return False
+		if not first or first == _NAK:
+			continue
+		if first != _SETTING_RESPONSE_PREFIX:
+			continue
+		try:
+			rest = ser.read(2)
+		except Exception:
+			return False
+		if len(rest) != 2:
+			return False
+		if rest[0:1] not in hexDigits or rest[1:2] not in hexDigits:
+			return False
+		return True
+	return False
 
 
 def _probeApolloIndexResponse(ser, *, command: bytes, timeout: float = 0.35) -> bool:
@@ -188,6 +237,10 @@ def _testApolloConnection(*, port: str, baud: int) -> tuple[bool, Optional[str]]
 			continue
 		try:
 			_configureSerialForApollo(ser)
+			# Match the synth driver: identify the device with the harmless "@V?" setting query
+			# first, and fall back to the indexing query for ROMs that only answer that one.
+			if _probeApolloSettingResponse(ser, timeout=0.35):
+				return True, candidate
 			for cmd in _INDEX_QUERY_COMMANDS:
 				if _probeApolloIndexResponse(ser, command=cmd, timeout=0.35):
 					return True, candidate

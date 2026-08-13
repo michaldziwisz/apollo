@@ -1472,6 +1472,30 @@ class SynthDriver(BaseSynthDriver):
 						if finishDetected(port, baudRate, ser):
 							return True
 						retained = [item for item in retained if item[2] is not ser]
+
+				# Last pass: some Apollo ROMs never answer "@V?" (this is why 0.1.87 moved detection
+				# to the indexing response). Before giving up on a port that opened, try the original
+				# indexing handshake, so the faster "@V?" scan can never lose a device it used to find.
+				for port, baudRate, ser in list(retained):
+					if overallDeadline is not None and time.monotonic() >= overallDeadline:
+						break
+					log.info(
+						f"Apollo auto-detect retrying retained {port}@{baudRate} with the indexing handshake"
+					)
+					if not ensureIndexingAndProbe(ser, port=port, baudRate=baudRate):
+						connectReasons.append(f"{port}@{baudRate} answered neither @V? nor the indexing query")
+						continue
+					log.info(f"Apollo auto-detect identified {port}@{baudRate} via indexing handshake")
+					retained = [item for item in retained if item[2] is not ser]
+					for _retainedPort, _retainedBaud, retainedSer in retained:
+						closeSerial(retainedSer)
+					retained = []
+					switched = trySwitchSynthBaudRate(ser, port=port, currentBaud=baudRate)
+					if switched is None:
+						closeSerial(ser)
+						break
+					return finalizeConnection(port, switched, ser)
+
 				for _port, _baudRate, ser in retained:
 					closeSerial(ser)
 
