@@ -1,0 +1,349 @@
+# SOME DESCRIPTIVE TITLE.
+# Copyright (C) YEAR THE PACKAGE'S COPYRIGHT HOLDER
+# This file is distributed under the same license as the apollo2 package.
+# FIRST AUTHOR <EMAIL@ADDRESS>, YEAR.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: apollo2 0.1.106\n"
+"Report-Msgid-Bugs-To: nvda-translations@groups.io\n"
+"POT-Creation-Date: 2026-08-13 23:46+0000\n"
+"PO-Revision-Date: 2026-08-29 16:53+0200\n"
+"Last-Translator: DJ Graco\n"
+"Language-Team: \n"
+"Language: pl\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"X-Generator: Poedit 3.9\n"
+
+#. Translators: Label for an advanced setting controlling the size of formant tuning lists.
+#: addon/synthDrivers/apollo2/driver.py:342
+msgid "Advanced: Formant tuning &range"
+msgstr "Zaawansowane: &Zakres strojenia formantów"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:351
+msgid "Advanced: Fn (nasal formant frequency) delta"
+msgstr "Zaawansowane: Fn (częstotliwość formantu nosowego) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:358
+msgid "Advanced: F1 (first formant frequency) delta"
+msgstr "Zaawansowane: F1 (częstotliwość pierwszego formantu) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:365
+msgid "Advanced: F2 (second formant frequency) delta"
+msgstr "Zaawansowane: F2 (częstotliwość drugiego formantu) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:372
+msgid "Advanced: F3 (third formant frequency) delta"
+msgstr "Zaawansowane: F3 (częstotliwość trzeciego formantu) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:379
+msgid "Advanced: ALF (low frequency amplitude) delta"
+msgstr "Zaawansowane: ALF (amplituda niskich częstotliwości) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:386
+msgid "Advanced: A1 (first formant amplitude) delta"
+msgstr "Zaawansowane: A1 (amplituda pierwszego formantu) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:393
+msgid "Advanced: A2 (second formant amplitude) delta"
+msgstr "Zaawansowane: A2 (amplituda drugiego formantu) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:400
+msgid "Advanced: A3 (third formant amplitude) delta"
+msgstr "Zaawansowane: A3 (amplituda trzeciego formantu) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:407
+msgid "Advanced: A4 (fourth formant amplitude) delta"
+msgstr "Zaawansowane: A4 (amplituda czwartego formantu) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:414
+msgid "Advanced: IV (degree of voicing) delta"
+msgstr "Zaawansowane: IV (stopień dźwięczności) — korekta"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:421
+msgid "Advanced: Reset formant tuning to defaults"
+msgstr "Zaawansowane: Przywróć domyślne strojenie formantów"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:428
+msgid "&Punctuation"
+msgstr "&Interpunkcja"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:434
+msgid "&Spell mode"
+msgstr "Tryb &literowania"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:440
+msgid "&Hypermode"
+msgstr "Tryb &Hypermode"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:446
+msgid "P&honetic mode"
+msgstr "Tryb &fonetyczny"
+
+#. Translators: Label for an advanced setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:452
+msgid "Advanced: Ignore pause before character descriptions"
+msgstr "Zaawansowane: Ignoruj przerwę przed opisami znaków"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:459
+msgid "Expand &numbers to words"
+msgstr "Zamieniaj &liczby na słowa"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:465
+msgid "&Mark-space ratio"
+msgstr "Współczynnik &mark-space"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:471
+msgid "Speaker &table"
+msgstr "&Tablica głosu"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:477
+msgid "Voice source/&filter"
+msgstr "Źródło głosu/&filtr"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:483
+msgid "&ROM slot"
+msgstr "Gniazdo &ROM"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:489
+msgid "&Sentence pause"
+msgstr "Przerwa między &zdaniami"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:495
+msgid "&Word pause"
+msgstr "Przerwa między &słowami"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:501
+msgid "&Voicing"
+msgstr "&Dźwięczność"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:507
+msgid "Serial &port"
+msgstr "&Port szeregowy"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:513
+msgid "Serial &baud rate"
+msgstr "Prędkość &transmisji szeregowej"
+
+#. Translators: Label for a setting in the voice settings dialog.
+#: addon/synthDrivers/apollo2/driver.py:519
+msgid "Announce NVDA &startup message"
+msgstr "Ogłaszaj &komunikat startowy NVDA"
+
+#. Manual: voices 1-3 are male-based, 4-6 are non-male-based.
+#.
+#. In "auto" voice filter mode, we map each voice to a distinct voice source/filter (`@$o`)
+#. so the Voice selection yields clearly different timbres on ROMs where @V voices are similar.
+#: addon/synthDrivers/apollo2/driver.py:1887
+msgid "Voice 1 (male default)"
+msgstr "Głos 1 (męski, domyślny)"
+
+#: addon/synthDrivers/apollo2/driver.py:1888
+msgid "Voice 2 (male spike)"
+msgstr "Głos 2 (męski, spike)"
+
+#: addon/synthDrivers/apollo2/driver.py:1889
+msgid "Voice 3 (male reduced high-frequency filter)"
+msgstr "Głos 3 (męski, filtr z ograniczonymi wysokimi częstotliwościami)"
+
+#: addon/synthDrivers/apollo2/driver.py:1890
+msgid "Voice 4 (female default)"
+msgstr "Głos 4 (żeński, domyślny)"
+
+#: addon/synthDrivers/apollo2/driver.py:1891
+msgid "Voice 5 (female spike)"
+msgstr "Głos 5 (żeński, spike)"
+
+#: addon/synthDrivers/apollo2/driver.py:1892
+msgid "Voice 6 (female reduced high-frequency filter)"
+msgstr "Głos 6 (żeński, filtr z ograniczonymi wysokimi częstotliwościami)"
+
+#: addon/synthDrivers/apollo2/driver.py:1897 addon/globalPlugins/apollo2.py:53
+msgid "Auto (detect)"
+msgstr "Automatycznie (wykryj)"
+
+#: addon/synthDrivers/apollo2/driver.py:2197 addon/synthDrivers/apollo2/driver.py:2225
+msgid "Auto (match Voice)"
+msgstr "Automatycznie (dopasuj do głosu)"
+
+#: addon/synthDrivers/apollo2/driver.py:2198
+msgid "Male"
+msgstr "Męski"
+
+#: addon/synthDrivers/apollo2/driver.py:2199
+msgid "Non-male"
+msgstr "Niemęski"
+
+#: addon/synthDrivers/apollo2/driver.py:2228
+msgid "Preserve ROM defaults (do not override)"
+msgstr "Zachowaj domyślne ustawienia ROM (nie nadpisuj)"
+
+#: addon/synthDrivers/apollo2/driver.py:2230
+msgid "Male (default)"
+msgstr "Męski (domyślny)"
+
+#: addon/synthDrivers/apollo2/driver.py:2231
+msgid "Female (default)"
+msgstr "Żeński (domyślny)"
+
+#: addon/synthDrivers/apollo2/driver.py:2232
+msgid "Male (spike)"
+msgstr "Męski (spike)"
+
+#: addon/synthDrivers/apollo2/driver.py:2233
+msgid "Female (spike)"
+msgstr "Żeński (spike)"
+
+#: addon/synthDrivers/apollo2/driver.py:2234
+msgid "Male (cut-down default)"
+msgstr "Męski (ograniczony filtr domyślny)"
+
+#: addon/synthDrivers/apollo2/driver.py:2235
+msgid "Female (cut-down default)"
+msgstr "Żeński (ograniczony filtr domyślny)"
+
+#: addon/synthDrivers/apollo2/driver.py:2236
+msgid "Male (reduced high-frequency filter)"
+msgstr "Męski (filtr z ograniczonymi wysokimi częstotliwościami)"
+
+#: addon/synthDrivers/apollo2/driver.py:2237
+msgid "Female (reduced high-frequency filter)"
+msgstr "Żeński (filtr z ograniczonymi wysokimi częstotliwościami)"
+
+#: addon/synthDrivers/apollo2/driver.py:2278
+msgid "±50 (recommended, faster UI)"
+msgstr "±50 (zalecane, szybszy interfejs)"
+
+#: addon/synthDrivers/apollo2/driver.py:2279
+msgid "±255 (full range, slower UI)"
+msgstr "±255 (pełny zakres, wolniejszy interfejs)"
+
+#: addon/synthDrivers/apollo2/driver.py:2310
+#, python-brace-format
+msgid "{slot}: {language}"
+msgstr "{slot}: {language}"
+
+#: addon/synthDrivers/apollo2/driver.py:2313
+#, python-brace-format
+msgid "ROM {slot}"
+msgstr "ROM {slot}"
+
+#. Translators: Displayed in formant tuning lists; indicates the default (no change).
+#: addon/synthDrivers/apollo2/driver.py:2567 addon/synthDrivers/apollo2/driver.py:2590
+msgid "0 (default)"
+msgstr "0 (domyślnie)"
+
+#: addon/globalPlugins/apollo2.py:358
+msgid "Apollo 2: Serial connection"
+msgstr "Apollo 2: połączenie szeregowe"
+
+#: addon/globalPlugins/apollo2.py:378
+msgid "Serial port:"
+msgstr "Port szeregowy:"
+
+#: addon/globalPlugins/apollo2.py:381
+msgid "Baud rate:"
+msgstr "Prędkość transmisji:"
+
+#: addon/globalPlugins/apollo2.py:388 addon/globalPlugins/apollo2.py:468
+msgid "Disable braille auto-detection (set display to No braille)"
+msgstr "Wyłącz automatyczne wykrywanie brajla (ustaw monitor na „Bez brajla”)"
+
+#: addon/globalPlugins/apollo2.py:392
+msgid "Test connection"
+msgstr "Testuj połączenie"
+
+#: addon/globalPlugins/apollo2.py:414
+msgid "Apollo detected."
+msgstr "Wykryto Apollo."
+
+#: addon/globalPlugins/apollo2.py:419
+msgid "Apollo not detected on the selected port/baud."
+msgstr "Nie wykryto Apollo przy wybranym porcie i prędkości transmisji."
+
+#. type: ignore[misc]
+#: addon/globalPlugins/apollo2.py:439 addon/globalPlugins/apollo2.py:469
+#: addon/globalPlugins/apollo2.py:485 addon/globalPlugins/apollo2.py:517
+msgid "Apollo 2"
+msgstr "Apollo 2"
+
+#: addon/globalPlugins/apollo2.py:448
+msgid "Apollo 2: Serial connection…"
+msgstr "Apollo 2: połączenie szeregowe…"
+
+#: addon/globalPlugins/apollo2.py:474
+msgid "Braille auto-detection disabled (No braille)."
+msgstr "Automatyczne wykrywanie brajla wyłączone („Bez brajla”)."
+
+#: addon/globalPlugins/apollo2.py:479
+msgid "Failed to change braille settings."
+msgstr "Nie udało się zmienić ustawień brajla."
+
+#: addon/globalPlugins/apollo2.py:484
+#| msgid "Apollo 2: Serial connection"
+msgid "Configure Apollo 2 serial connection"
+msgstr "Konfiguruje połączenie szeregowe Apollo 2"
+
+#: addon/globalPlugins/apollo2.py:503
+msgid "Apollo 2 settings saved."
+msgstr "Zapisano ustawienia Apollo 2."
+
+#: addon/globalPlugins/apollo2.py:508
+msgid "Failed to save Apollo 2 settings."
+msgstr "Nie udało się zapisać ustawień Apollo 2."
+
+#: addon/globalPlugins/apollo2.py:516
+msgid "Test Apollo 2 connection and switch synthesizer"
+msgstr "Testuje połączenie z Apollo 2 i przełącza syntezator"
+
+#: addon/globalPlugins/apollo2.py:527
+msgid "Apollo not detected; not switching synthesizer."
+msgstr "Nie wykryto Apollo; syntezator nie zostanie przełączony."
+
+#: addon/globalPlugins/apollo2.py:534
+msgid "Apollo 2 active."
+msgstr "Apollo 2 jest aktywny."
+
+#: addon/globalPlugins/apollo2.py:539
+msgid "Failed to switch synthesizer to Apollo 2."
+msgstr "Nie udało się przełączyć syntezatora na Apollo 2."
+
+#. Translators: Summary/title for this add-on to be shown in the add-on store.
+#: buildVars.py:18
+msgid "Dolphin Apollo 2 synthesizer driver (modern)"
+msgstr "Sterownik syntezatora Dolphin Apollo 2 (modern)"
+
+#: buildVars.py:21
+msgid "Adds support for Dolphin Apollo 2 / PC 2 Card / Juno serial speech synthesizers."
+msgstr "Dodaje obsługę szeregowych syntezatorów mowy Dolphin Apollo 2 / PC 2 Card / Juno."
+
+#: buildVars.py:26
+msgid "Detect the Apollo consistently in the driver and in the connection test."
+msgstr "Ujednolicono wykrywanie Apollo w sterowniku i podczas testowania połączenia."
